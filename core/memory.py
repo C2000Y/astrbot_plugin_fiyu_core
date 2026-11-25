@@ -7,7 +7,7 @@ from collections import OrderedDict
 from .store import KINDS, compact_person, identity_name, message_identity_refs, rank_memories
 from .habits import HABIT_PROMPT, normalize_habits
 from .personality import LEGACY_TITLES, legacy_reference, legacy_title, mask_legacy_quotes, model_name, replace_legacy
-from .telemetry import BudgetExceeded
+from .telemetry import BudgetExceeded, ModelFailure
 from .util import (
     clean,
     contains_dsml,
@@ -509,6 +509,7 @@ class MemoryService:
         self.failures = {}
         self.query_cache = OrderedDict()
         self.embed_cursor = {}
+        self.embed_lock = asyncio.Lock()
 
     async def learn_once(self, cfg, scope=None, *, force=False, module="memory"):
         settings = cfg["memory"] if module == "memory" else cfg["learning"]
@@ -718,7 +719,9 @@ class MemoryService:
         if until is not None and len(to_time) == 10:
             until += 86399
         k = max(1, min(20, limit or cfg["memory"]["recall_top_k"]))
-        fp = self.host.embedding_fingerprint(cfg["models"]["embedding_provider"])
+        profile = self._embedding_profile(cfg)
+        dimension = await self._embedding_dimension(profile) if profile else 0
+        fp = profile.fingerprint(dimension) if profile else ""
         rows = await self.store.call(
             "recall_candidates",
             scope,
@@ -737,8 +740,10 @@ class MemoryService:
             rank_memories, rows, query, subject, current, k, deep=deep
         )
         if (
-            fp
+            profile
+            and fp
             and query
+            and profile.fits(query)
             and any(r.get("embedding") for r in rows)
             and (not ranked or len(ranked) < min(k, 3))
         ):
@@ -748,14 +753,24 @@ class MemoryService:
                 if old and now() - old[0] < 3600:
                     vec = old[1]
                 else:
+                    if await self._embedding_is_paused(profile, scope):
+                        raise BudgetExceeded("Embedding 等待重试")
                     vec = (
                         await self.gateway.embed(
-                            meta["umo"], [query], scope=scope, config=cfg
+                            meta["umo"], [query], scope=scope, config=cfg, profile=profile,
+                            authorize=lambda: self._embedding_authorized(meta, profile),
                         )
                     )[0]
+                    if len(vec) != dimension:
+                        # Publish the observed change without scoring this query in the old space.
+                        await self._save_embedding_batch(profile, dimension, len(vec), [])
+                        raise BudgetExceeded("Embedding 维度变化，等待重新索引")
                     self.query_cache[cache_key] = (now(), vec)
                     while len(self.query_cache) > 128:
                         self.query_cache.popitem(last=False)
+                    await self._embedding_recovered(profile, scope)
+                if await self._embedding_dimension(profile) != dimension or not await self._embedding_authorized(meta, profile):
+                    raise BudgetExceeded("Embedding 索引或会话授权已变化")
                 ranked = await asyncio.to_thread(
                     rank_memories,
                     rows,
@@ -767,13 +782,17 @@ class MemoryService:
                     vector=vec,
                     semantic_min=cfg["memory"]["semantic_similarity"],
                 )
-            except Exception as e:
+            except BudgetExceeded:
+                pass
+            except ModelFailure as e:
+                await self._embedding_failed(profile, scope, e, 0, 0, 0)
+            except Exception:
                 self.log.emit(
                     "MEMORY",
                     "embedding_query_fallback",
                     "DEBUG",
                     scope=scope,
-                    exception=type(e).__name__,
+                    error_kind="unknown",
                 )
         for r in ranked:
             # Sanitize human-readable fields, never redact the canonical identity refs.
@@ -856,61 +875,209 @@ class MemoryService:
             remaining -= len(text) + 1
         return "\n".join(out)
 
-    async def embed_once(self, cfg):
-        if (
-            not cfg["memory"]["enabled"]
-            or not cfg["models"]["embedding_provider"]
-            or cfg["access"]["mode"] != "active"
-        ):
-            return False
-        fp = self.host.embedding_fingerprint(cfg["models"]["embedding_provider"])
-        if not fp:
-            return False
-        for m in await self.store.call("sessions"):
-            if not allowed(m, cfg):
-                continue
-            people = await self.store.call("scope_people", m["scope"])
-            deny = [
-                p["ref"]
-                for p in people
-                if p["uid"] in cfg["access"]["blocked_users"] or p["blocked"]
-            ]
-            cursor_key=(m["scope"],fp)
-            rows = await self.store.call("unembedded", m["scope"], fp, 12, deny,
-                                         self.embed_cursor.get(cursor_key,0),cfg["habits"]["enabled"])
-            if not rows:
-                self.embed_cursor.pop(cursor_key,None)
-                continue
-            last=rows[-1]["id"]
-            rows=model_memory_rows(rows,cfg,set(cfg["access"]["blocked_users"]))
-            if not rows:
-                self.embed_cursor[cursor_key]=last
-                continue
-            try:
-                vecs = await self.gateway.embed(
-                    m["umo"],
-                    [r["title"] + "\n" + r["full_text"] for r in rows],
-                    scope=m["scope"],
-                    background=True,
-                    config=cfg,
-                )
-                await self.store.call(
-                    "save_vectors",
-                    fp,
-                    [(r["id"], r["revision"], v) for r, v in zip(rows, vecs)],
-                )
-                self.embed_cursor[cursor_key]=last
-                self.log.emit("MEMORY", "indexed", scope=m["scope"], count=len(vecs))
+    def _embedding_profile(self, cfg):
+        if not cfg["models"]["embedding_provider"] or not self.gateway:
+            return None
+        try:
+            return self.gateway.embedding_profile(cfg)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _embedding_key(profile, part):
+        return f"embedding:{profile.key}:{part}"
+
+    async def _embedding_dimension(self, profile):
+        value = await self.store.call("get_kv", self._embedding_key(profile, "dimension"), 0)
+        return value if type(value) is int and 1 <= value <= 8192 else 0
+
+    async def _save_embedding_batch(self, profile, previous, dimension, records):
+        saved = await self.store.call(
+            "save_embedding_batch", self._embedding_key(profile, "dimension"), previous,
+            dimension, profile.fingerprint(dimension), records,
+        )
+        if saved is not None and previous and previous != dimension:
+            for cursor in list(self.embed_cursor):
+                if cursor[1] == profile.key:
+                    del self.embed_cursor[cursor]
+        return saved
+
+    async def _embedding_backoff(self, profile, part):
+        return await self.store.call("get_kv", self._embedding_key(profile, part), {})
+
+    async def _embedding_is_paused(self, profile, scope):
+        for part in ("provider", scope):
+            if (await self._embedding_backoff(profile, part)).get("retry_at", 0) > now():
                 return True
-            except BudgetExceeded:
+        return False
+
+    async def _embedding_failed(self, profile, scope, failure, indexed, pending, deferred):
+        provider_wide = failure.category == "quota_exhausted" or (
+            failure.category == "provider_unavailable" and failure.http_status in (401, 403, 404)
+        )
+        part = "provider" if provider_wide else scope
+        old = await self._embedding_backoff(profile, part)
+        failures = min(8, old.get("failures", 0) + 1)
+        if failure.category in ("timeout", "rate_limit") or (
+            failure.category == "provider_unavailable" and not provider_wide
+        ):
+            base, ceiling = 120, 3600
+        elif provider_wide:
+            base, ceiling = 3600, 21600
+        else:
+            base, ceiling = 900, 10800
+        retry_at = now() + min(ceiling, base * 2 ** (failures - 1))
+        fields = failure.log_fields()
+        state = dict(old, **fields, failures=failures, last_attempt=now(), retry_at=retry_at,
+                     deferred=deferred)
+        for key in ("http_status", "provider_code"):
+            if key not in fields:
+                state.pop(key, None)
+        await self.store.call("set_kv", self._embedding_key(profile, part), state)
+        self.log.emit(
+            "MEMORY", "index_failed", "WARNING", scope=scope, provider=profile.provider,
+            task="embedding", provider_wide=provider_wide, indexed=indexed, pending=pending,
+            deferred=deferred, retry_at=retry_at, **fields,
+        )
+
+    async def _embedding_recovered(self, profile, scope, *, deferred=None, summary=None):
+        ts = now()
+        old = await self._embedding_backoff(profile, scope) if deferred is None else {}
+        await self.store.call(
+            "set_kv", self._embedding_key(profile, scope),
+            {"last_attempt": ts, "last_success": ts,
+             "deferred": old.get("deferred", 0) if deferred is None else deferred,
+             "summary": old.get("summary", 0) if summary is None else summary},
+        )
+        if await self._embedding_backoff(profile, "provider"):
+            await self.store.call("set_kv", self._embedding_key(profile, "provider"), {})
+
+    async def _embedding_authorized(self, meta, profile, participants=(), *, background=False):
+        live = self.config.snapshot()
+        return (
+            live["memory"]["enabled"] and allowed(meta, live)
+            and (not background or live["access"]["mode"] == "active")
+            and (not participants or not set(participants) & set(live["access"]["blocked_users"]))
+            and self._embedding_profile(live) == profile
+        )
+
+    async def _embedding_denied(self, scope, cfg):
+        blocked = set(cfg["access"]["blocked_users"])
+        return [p["ref"] for p in await self.store.call("scope_people", scope)
+                if p["blocked"] or p["uid"] in blocked]
+
+    async def embedding_status(self, cfg):
+        result = {"state": "disabled", "provider": clean(cfg["models"]["embedding_provider"], 120),
+                  "indexed": 0, "pending": 0, "scopes": []}
+        if not cfg["memory"]["enabled"] or not result["provider"]:
+            return result
+        profile = self._embedding_profile(cfg)
+        if not profile:
+            return dict(result, state="provider_unavailable")
+        dimension = await self._embedding_dimension(profile)
+        fp = profile.fingerprint(dimension)
+        global_failure = await self._embedding_backoff(profile, "provider")
+        result.update(dimension=dimension or profile.expected_dimension,
+                      max_texts=profile.max_texts, max_text_tokens=profile.max_text_tokens,
+                      max_batch_tokens=profile.max_batch_tokens, input_format=profile.input_format,
+                      provider_failure=global_failure)
+        for meta in await self.store.call("sessions"):
+            if not allowed(meta, cfg):
+                continue
+            scope = meta["scope"]
+            counts = await self.store.call("embedding_counts", scope, fp,
+                                           await self._embedding_denied(scope, cfg), cfg["habits"]["enabled"])
+            state = await self._embedding_backoff(profile, scope)
+            result["indexed"] += counts["indexed"]
+            result["pending"] += counts["pending"]
+            result["scopes"].append({"scope": scope[:12], **counts, **state})
+        paused = cfg["access"]["mode"] != "active" or global_failure.get("retry_at", 0) > now()
+        result["state"] = "paused" if paused else "pending" if result["pending"] else "ready"
+        return result
+
+    async def _index_embeddings(self, meta, cfg, profile):
+        scope = meta["scope"]
+        dimension = await self._embedding_dimension(profile)
+        cursor = scope, profile.key
+        rows = await self.store.call(
+            "unembedded", scope, profile.fingerprint(dimension), max(12, profile.max_texts),
+            await self._embedding_denied(scope, cfg), self.embed_cursor.get(cursor, 0), cfg["habits"]["enabled"],
+        )
+        if not rows:
+            self.embed_cursor.pop(cursor, None)
+            return False
+        last = rows[-1]["id"]
+        eligible = model_memory_rows(rows, cfg, set(cfg["access"]["blocked_users"]))
+        prepared, texts = [], []
+        summary = 0
+        for row in eligible:
+            text = row["title"] + "\n" + row["full_text"]
+            if not profile.fits(text):
+                text = row["title"] + "\n" + row["gist"]
+                if not profile.fits(text):
+                    continue
+                summary += 1
+            prepared.append(row)
+            texts.append(text)
+        deferred = len(rows) - len(texts)
+        if deferred or summary:
+            self.log.emit("MEMORY", "embedding_text_selected", scope=scope, provider=profile.provider,
+                          task="embedding", deferred=deferred, summary=summary)
+        if not texts:
+            self.embed_cursor[cursor] = last
+            old = await self._embedding_backoff(profile, scope)
+            await self.store.call("set_kv", self._embedding_key(profile, scope), dict(old, deferred=deferred))
+            return False
+
+        participants = {p["uid"] for row in prepared for p in row["participants"]}
+
+        async def authorize():
+            if not await self._embedding_authorized(meta, profile, participants, background=True):
                 return False
-            except Exception as e:
-                self.log.emit(
-                    "MEMORY",
-                    "index_failed",
-                    "WARNING",
-                    scope=m["scope"],
-                    exception=type(e).__name__,
-                )
-                return False
+            people = await self.store.call("scope_people", scope)
+            return not any(p["uid"] in participants and p["blocked"] for p in people)
+
+        indexed = 0
+        changed_dimension = False
+        try:
+            async for start, vectors in self.gateway.embed_batches(
+                meta["umo"], texts, scope=scope, background=True, config=cfg,
+                profile=profile, authorize=authorize,
+            ):
+                if not await authorize():
+                    break
+                size = len(vectors[0])
+                records = [(r["id"], r["revision"], v)
+                           for r, v in zip(prepared[start:start + len(vectors)], vectors)]
+                saved = await self._save_embedding_batch(profile, dimension, size, records)
+                if saved is None:
+                    break
+                changed_dimension |= bool(dimension and dimension != size)
+                dimension = size
+                indexed += saved
+                await self._embedding_recovered(profile, scope, deferred=deferred, summary=summary)
+                self.log.emit("MEMORY", "indexed", scope=scope, provider=profile.provider,
+                              task="embedding", count=saved, pending=len(rows) - indexed,
+                              items=len(vectors), dimension=size)
+            else:
+                if indexed == len(texts) and not changed_dimension:
+                    self.embed_cursor[cursor] = last
+        except BudgetExceeded:
+            self.log.emit("MEMORY", "index_budget", "DEBUG", scope=scope, provider=profile.provider,
+                          task="embedding", indexed=indexed, pending=len(rows) - indexed)
+        except ModelFailure as failure:
+            await self._embedding_failed(profile, scope, failure, indexed, len(rows) - indexed, deferred)
+        return indexed > 0
+
+    async def embed_once(self, cfg):
+        if not cfg["memory"]["enabled"] or cfg["access"]["mode"] != "active" or self.embed_lock.locked():
+            return False
+        profile = self._embedding_profile(cfg)
+        if not profile:
+            return False
+        async with self.embed_lock:
+            for meta in await self.store.call("sessions"):
+                if allowed(meta, cfg) and not await self._embedding_is_paused(profile, meta["scope"]):
+                    if await self._index_embeddings(meta, cfg, profile):
+                        return True
         return False

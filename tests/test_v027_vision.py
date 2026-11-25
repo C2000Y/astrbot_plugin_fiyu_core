@@ -33,8 +33,8 @@ class VisionStrategyTests(unittest.IsolatedAsyncioTestCase):
         self.cfg = self.engine.config.snapshot()
         self.cfg["access"].update(mode="active", allowed_groups=["g1", "g2"])
         self.cfg["models"].update(chat_provider="chat", decision_provider="judge", vision_provider="vision")
-        self.cfg["decision"].update(ordinary_check_probability=1, merge_wait_seconds=0.02,
-                                    merge_max_wait_seconds=0.1, unsolicited_gap_seconds=0)
+        self.cfg["decision"].update(ordinary_check_probability=1, merge_wait_seconds=0.18,
+                                    merge_max_wait_seconds=0.45, unsolicited_gap_seconds=0)
         self.cfg["reply"].update(image_cache_entries=0, gap_min=0, gap_max=0)
         self.save()
         self.engine.running = True

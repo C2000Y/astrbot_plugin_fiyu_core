@@ -8,6 +8,7 @@ Run from the plugin's parent directory:
   python astrbot_plugin_fiyu_core/tests/verify_upgrade_v012.py /path/to/Fiyu-Core-v0.2.4.zip
   python astrbot_plugin_fiyu_core/tests/verify_upgrade_v012.py /path/to/Fiyu-Core-v0.2.5.zip
   python astrbot_plugin_fiyu_core/tests/verify_upgrade_v012.py /path/to/Fiyu-Core-v0.2.6.zip
+  python astrbot_plugin_fiyu_core/tests/verify_upgrade_v012.py /path/to/Fiyu-Core-v0.2.7.zip
 
 All versions operate solely on a fresh temporary fixture. No real bot data/API.
 """
@@ -29,7 +30,7 @@ from astrbot_plugin_fiyu_core import __version__
 from astrbot_plugin_fiyu_core.core.config import ConfigStore
 from astrbot_plugin_fiyu_core.core.store import Store
 from astrbot_plugin_fiyu_core.core.util import scope_key, now, day_key
-assert __version__ in ("0.1.2","0.2.0","0.2.1","0.2.2","0.2.3","0.2.4","0.2.5","0.2.6")
+assert __version__ in ("0.1.2","0.2.0","0.2.1","0.2.2","0.2.3","0.2.4","0.2.5","0.2.6","0.2.7")
 v3=__version__!="0.1.2"
 v4=__version__ not in ("0.1.2","0.2.0")
 root=Path("fixture")
@@ -46,7 +47,7 @@ cfg["budget"].update(daily_tokens=2000000)
 cfg["dota"].update(existing_snapshots_dir="C:/test/snapshots",auto_sync=False)
 if v4:
     cfg["research"].update(sources=["cs2_news","dota_meta"],daily_topics=2)
-if __version__ in ("0.2.5", "0.2.6"):
+if __version__ in ("0.2.5", "0.2.6", "0.2.7"):
     cfg["reply"].update(split_chars=420,split_on_newline=False,max_tool_rounds=2,max_tool_calls=4)
 conf.save(cfg,conf.revision())
 store=Store(root/"fiyu.sqlite3")
@@ -149,7 +150,7 @@ def verify(previous):
     from astrbot_plugin_fiyu_core import __version__
     from astrbot_plugin_fiyu_core.core.config import ConfigStore
     from astrbot_plugin_fiyu_core.core.store import Store
-    assert __version__=="0.2.7"
+    assert __version__=="0.3.0"
     with TemporaryDirectory(prefix="fiyu-upgrade-fixture-") as d:
         subprocess.run([sys.executable,"-c",OLD_FIXTURE],cwd=d,check=True,
                        env={**os.environ,"PYTHONPATH":str(previous),"PYTHONDONTWRITEBYTECODE":"1"})
@@ -176,6 +177,8 @@ def verify(previous):
             expected_config["reply"]["split_chars"]=300
         contains_old_values(expected_config,config.snapshot())
         assert config.snapshot()["reply"]["vision_strategy"] == "economy"
+        assert config.snapshot()["decision"]["dynamic_enabled"] is False
+        assert all(not config.snapshot()["media"][kind]["enabled"] for kind in ("image","stt","tts","omni"))
         assert config.snapshot()["reply"]["split_on_newline"] is expected_config["reply"].get("split_on_newline", True)
         assert config.snapshot()["research"]["enabled"] is False
         upgraded=Store(path)
@@ -232,5 +235,5 @@ def verify(previous):
 
 if __name__=="__main__":
     if len(sys.argv)!=2 or not Path(sys.argv[1]).is_file():
-        raise SystemExit("Provide a release ZIP from v0.1.2 or v0.2.0–v0.2.6 as the only argument.")
+        raise SystemExit("Provide a release ZIP from v0.1.2 or v0.2.0–v0.2.7 as the only argument.")
     verify(Path(sys.argv[1]).resolve())

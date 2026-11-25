@@ -1,14 +1,15 @@
-"""Host integration smoke tests, run when real AstrBot 4.29.3 is available."""
+"""Offline host integration smoke tests for the real AstrBot 4.29.x SDK."""
 
 import json
+import wave
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 try:
-    from astrbot.api.message_components import At, AtAll, Plain, Poke, Reply
+    from astrbot.api.message_components import At, AtAll, Image, Plain, Poke, Record, Reply, Video
     from astrbot.api.star import StarTools
     from astrbot.core.platform.astr_message_event import AstrMessageEvent
     from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
@@ -25,7 +26,7 @@ except ImportError:
     HAS_ASTRBOT = False
 
 
-@unittest.skipUnless(HAS_ASTRBOT, "requires real AstrBot SDK 4.29.3")
+@unittest.skipUnless(HAS_ASTRBOT, "requires real AstrBot SDK 4.29.x")
 class NativeTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def event(components, platform="qq_official", typ=None, raw=None):
@@ -139,6 +140,30 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         await host.generate("provider", "question", "system", tool_results=[tcr])
         self.assertIs(calls[1]["tool_calls_result"][0], tcr)
 
+    async def test_native_media_components_and_outgoing_chain(self):
+        from PIL import Image as PillowImage
+
+        host = AstrHost(None)
+        with TemporaryDirectory() as path:
+            audio = Path(path) / "audio.wav"
+            with wave.open(str(audio), "wb") as stream:
+                stream.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                stream.writeframes(b"\0\0" * 160)
+            video = Path(path) / "video.mp4"
+            video.write_bytes(b"local media path fixture")
+            image = Path(path) / "image.png"
+            PillowImage.new("RGB", (1, 1)).save(image)
+            record, movie = Record.fromFileSystem(audio), Video.fromFileSystem(video)
+            event = self.event([record, movie], platform="aiocqhttp")
+            self.assertEqual(host.info(event)["media"], [("audio", record), ("video", movie)])
+            self.assertTrue(Path(await host.media_file(record)).is_file())
+            self.assertEqual(Path(await host.media_file(movie)), video)
+            event.send = AsyncMock()
+            self.assertTrue(await host.send_media(event, "audio", audio))
+            self.assertIsInstance(event.send.await_args.args[0].chain[0], Record)
+            self.assertTrue(await host.send_media(event, "image", image))
+            self.assertIsInstance(event.send.await_args.args[0].chain[0], Image)
+
     async def test_start_dashboard_routes_and_terminate(self):
         class C:
             def __init__(self):
@@ -158,14 +183,24 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as d:
             with patch.object(StarTools, "get_data_dir", return_value=Path(d)):
                 await plugin.initialize()
-                self.assertTrue(plugin.engine.running)
-                self.assertEqual(len(c.routes), 24)
-                r = await plugin.api_overview()
-                self.assertEqual(json.loads(r.body)["mode"], "off")
-                value = json.loads((await plugin.api_config()).body)
-                self.assertTrue(value["schema"])
-                self.assertEqual(value["config"]["logs"]["retention_days"], 15)
-                await plugin.terminate()
+                try:
+                    self.assertTrue(plugin.engine.running)
+                    for route, method in (
+                        ("overview", "GET"), ("config", "GET"), ("config/save", "POST"),
+                        ("usage", "GET"), ("action", "POST"), ("personas/merge_options", "GET"),
+                        ("personas/merge_preview", "POST"), ("personas/merge_apply", "POST"),
+                    ):
+                        handler, methods = c.routes[f"/astrbot_plugin_fiyu_core/{route}"]
+                        self.assertTrue(callable(handler))
+                        self.assertEqual(methods, [method])
+                    overview = json.loads((await plugin.api_overview()).body)
+                    self.assertEqual(overview["mode"], "off")
+                    self.assertEqual(overview["embedding"]["state"], "disabled")
+                    value = json.loads((await plugin.api_config()).body)
+                    self.assertTrue(value["schema"])
+                    self.assertEqual(value["config"]["logs"]["retention_days"], 15)
+                finally:
+                    await plugin.terminate()
                 self.assertFalse(plugin.engine.running)
 
     async def test_native_views_discovery(self):

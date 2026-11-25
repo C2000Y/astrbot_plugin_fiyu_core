@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
 from astrbot.api.event import MessageChain
-from astrbot.api.message_components import At, AtAll, Image, Plain, Poke, Reply
+from astrbot.api.message_components import At, AtAll, Image, Plain, Poke, Record, Reply, Video
 from astrbot.core.agent.message import (
     AssistantMessageSegment,
     TextPart,
@@ -19,8 +21,9 @@ from astrbot.core.exceptions import EmptyModelOutputError, ProviderNotFoundError
 from astrbot.core.provider.entities import ToolCallsResult
 from openai import APIConnectionError, APITimeoutError
 
+from .core.embedding import EmbeddingProtocolError, EmbeddingProviderError, EmbeddingResult, ordered_vectors
 from .core.telemetry import BalanceCheckError, ModelFailure
-from .core.util import clean, contains_dsml, ident, now, plain_reply_text, unsafe_secret
+from .core.util import clean, contains_dsml, dump, ident, now, plain_reply_text, unsafe_secret
 
 
 SEARCH_TOOLS = {
@@ -177,6 +180,10 @@ class AstrHost:
             image_senders.extend([str(q.sender_id or uid)] * len(quoted_images))
         if images:
             text += f" [图片×{min(len(images), 20)}]"
+        media = [("audio" if isinstance(m, Record) else "video", m)
+                 for m in msgs if isinstance(m, (Record, Video))][:4]
+        for kind, _ in media:
+            text += " [语音]" if kind == "audio" else " [视频]"
         if poke:
             text = "[戳了一下肥鱼]"
         ext_id = str(getattr(event.message_obj, "message_id", "") or "")
@@ -214,6 +221,7 @@ class AstrHost:
             "quoted_uids": quoted_uids,
             "images": images[:20],
             "image_senders": image_senders[:20],
+            "media": media,
             "unverified_quotes": unverified_quotes,
         }
 
@@ -309,25 +317,111 @@ class AstrHost:
         )
 
     async def embed(self, pid, texts):
+        if not texts:
+            return []
         p = self.context.get_provider_by_id(pid)
         if not p or not hasattr(p, "get_embeddings"):
-            raise ValueError("Embedding Provider 不存在")
-        return await p.get_embeddings(texts)
+            raise ModelFailure("provider_unavailable")
+        try:
+            adapter = self._embedding_adapter(p)
+            if adapter == "openai":
+                # Reuse the initialized provider client and request settings. Its public
+                # list-only helper discards indices and uses SDK retries by default.
+                response = await p.client.with_options(max_retries=0).embeddings.create(
+                    input=texts, model=p.model, **p._embedding_kwargs()
+                )
+                rows = getattr(response, "data", None)
+                if not isinstance(rows, list):
+                    raise EmbeddingProtocolError("Embedding 响应缺少向量列表")
+                vectors = ordered_vectors(
+                    ((getattr(row, "index", None), getattr(row, "embedding", None)) for row in rows), len(texts)
+                )
+                usage = getattr(response, "usage", None)
+                return EmbeddingResult(vectors, getattr(usage, "prompt_tokens", None))
+            if adapter == "dashscope":
+                return await self._dashscope_embedding(p, texts)
+            return await p.get_embeddings(texts)
+        except APITimeoutError:
+            raise ModelFailure("timeout") from None
+        except (ProviderNotFoundError, APIConnectionError):
+            raise ModelFailure("provider_unavailable") from None
+
+    @staticmethod
+    def _embedding_adapter(provider):
+        cls = type(provider)
+        if cls.__module__ == "astrbot.core.provider.sources.openai_embedding_source" and cls.__name__ == "OpenAIEmbeddingProvider":
+            return "openai"
+        if cls.__module__ == "astrbot.core.provider.sources.dashscope_embedding_source" and cls.__name__ == "DashScopeEmbeddingProvider":
+            return "dashscope"
+        return "native"
+
+    @staticmethod
+    def _dashscope_multimodal(model):
+        return "vl-embedding" in model or model.startswith(("multimodal-embedding", "tongyi-embedding-vision"))
+
+    async def _dashscope_embedding(self, provider, texts):
+        from dashscope import MultiModalEmbedding, TextEmbedding
+
+        multimodal = self._dashscope_multimodal(provider.model)
+        sdk = MultiModalEmbedding if multimodal else TextEmbedding
+        options = {"base_address": provider.base_url, "headers": provider.request_headers.copy()}
+        dimension = provider.get_dim()
+        if dimension > 0:
+            options["dimension"] = dimension
+        # Keep the synchronous SDK's network timeout bounded even if the coroutine is cancelled.
+        timeout = provider.provider_config.get("timeout", 20)
+        options["request_timeout"] = max(1, min(120, int(timeout))) if str(timeout).isdigit() else 20
+        response = await asyncio.to_thread(
+            sdk.call, model=provider.model, api_key=provider.api_key,
+            input=[{"text": text} for text in texts] if multimodal else texts, **options,
+        )
+        status = getattr(response, "status_code", None)
+        if status != 200:
+            raise EmbeddingProviderError(status, getattr(response, "code", None))
+        output = getattr(response, "output", None)
+        rows = output.get("embeddings") if isinstance(output, Mapping) else None
+        if not isinstance(rows, list):
+            raise EmbeddingProtocolError("Embedding 响应缺少向量列表")
+        indexed = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise EmbeddingProtocolError("Embedding 响应条目异常")
+            index = row.get("text_index", row.get("index"))
+            if "index" in row and row["index"] != index:
+                raise EmbeddingProtocolError("Embedding 响应位置冲突")
+            indexed.append((index, row.get("embedding")))
+        usage = getattr(response, "usage", None)
+        tokens = usage.get("total_tokens") if isinstance(usage, Mapping) else None
+        return EmbeddingResult(ordered_vectors(indexed, len(texts)), tokens)
 
     def embedding_fingerprint(self, pid):
+        info = self.embedding_metadata(pid)
+        return info["identity"] if info else ""
+
+    def embedding_metadata(self, pid):
         if not pid:
-            return ""
+            return None
         p = self.context.get_provider_by_id(pid)
         if not p or not hasattr(p, "get_embeddings"):
-            return ""
-        return ident(
-            pid
-            + "|"
-            + str(p.get_model())
-            + "|"
-            + str(getattr(p, "provider_config", {}).get("api_base", "")),
-            24,
-        )
+            return None
+        cfg = getattr(p, "provider_config", {})
+        model = str(getattr(p, "model", "") or p.get_model() or cfg.get("embedding_model", ""))
+        adapter = self._embedding_adapter(p)
+        endpoint = str(cfg.get("embedding_api_base", cfg.get("api_base", "")))
+        dimension, input_format = 0, "texts"
+        if adapter == "openai":
+            endpoint = str(p.client.base_url)
+            dimension = p._embedding_kwargs().get("dimensions", 0)
+        elif adapter == "dashscope":
+            endpoint = str(p.base_url)
+            dimension = p.get_dim()
+            if self._dashscope_multimodal(model):
+                input_format = "text_objects"
+        dimension = dimension if type(dimension) is int and 1 <= dimension <= 8192 else 0
+        return {
+            "identity": ident(dump([pid, adapter, type(p).__qualname__, model, endpoint, dimension]), 32),
+            "model": model, "dimension": dimension, "input_format": input_format,
+        }
 
     async def kb(self, name, query, top_k):
         manager = self.context.kb_manager
@@ -390,6 +484,40 @@ class AstrHost:
         if not path.is_file() or path.stat().st_size > 12 * 1024 * 1024:
             raise ValueError("图片不可读或超过12MB")
         return str(path)
+
+    async def media_file(self, component):
+        if not isinstance(component, (Record, Video)):
+            raise ModelFailure("unsupported_modality")
+        path = Path(await component.convert_to_file_path())
+        if not path.is_file() or not 0 < path.stat().st_size <= 7 * 1024 * 1024:
+            raise ModelFailure("unsupported_modality")
+        return str(path)
+
+    async def synthesize(self, provider_id, text):
+        provider = self.context.get_provider_by_id(provider_id)
+        if not provider or not callable(getattr(provider, "get_audio", None)):
+            raise ModelFailure("provider_unavailable")
+        return await provider.get_audio(text)
+
+    async def transcribe(self, provider_id, path):
+        provider = self.context.get_provider_by_id(provider_id)
+        if not provider or not callable(getattr(provider, "get_text", None)):
+            raise ModelFailure("provider_unavailable")
+        return await provider.get_text(path)
+
+    @staticmethod
+    def media_supported(event, kind):
+        return kind in ("image", "audio") and event.get_platform_name() in {
+            "aiocqhttp", "qq_official", "qq_official_webhook"
+        }
+
+    @staticmethod
+    async def send_media(event, kind, path):
+        if not AstrHost.media_supported(event, kind):
+            return False
+        component = Image.fromFileSystem(path) if kind == "image" else Record.fromFileSystem(path)
+        await event.send(MessageChain([component]))
+        return True
 
     @staticmethod
     async def send(event, text):
@@ -492,6 +620,10 @@ class AstrHost:
         return {
             "chat_provider": chat,
             "embedding_provider": embedding,
+            "tts_provider": providers(self.context.get_all_tts_providers())
+                if hasattr(self.context, "get_all_tts_providers") else [],
+            "stt_provider": providers(self.context.get_all_stt_providers())
+                if hasattr(self.context, "get_all_stt_providers") else [],
             "persona": personas,
             "knowledge_bases": kbs,
         }

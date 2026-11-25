@@ -43,6 +43,10 @@ const i18n = {
   memory: "记忆学习",
   style: "语言学习",
   vision: "视觉理解",
+  reply_casual: "角色闲聊", reply_deep: "深度回答", ocr: "文字识别",
+  image: "绘图与编辑", stt: "语音识别", tts: "语音合成", omni: "音视频理解",
+  images: "张", seconds: "秒", characters: "字符", tokens: "Token",
+
   vision_observe: "主动视觉理解",
   economy: "经济",
   balanced: "平衡",
@@ -56,6 +60,8 @@ const i18n = {
   model_chose_silence: "模型选择不接话",
   below_confidence_threshold: "置信度不足",
   provider_unavailable: "模型服务不可用",
+  paused: "冷却中", ready: "可用", disabled: "未启用",
+  quiet: "安静", normal: "常态", busy: "高流量", burst: "突发",
   timeout: "响应超时",
   rate_limit: "供应商限频",
   quota_exhausted: "供应商额度不足",
@@ -81,6 +87,7 @@ const i18n = {
   dota_news: "Dota 2 公告",
   cs2_news: "CS2 公告",
   dota_pro: "Dota 职业比赛",
+  dota_pro_cache: "Dota 职业比赛缓存",
   dota_meta: "Dota 胜率快照",
 };
 const names = {
@@ -110,10 +117,10 @@ const moduleForTab = (tab) =>
 const configFamilies = [
   { key: "access", label: "接入与转达", sections: ["access", "relay"] },
   { key: "persona", label: "人格与表达", sections: ["persona", "social"] },
-  { key: "conversation", label: "对话与回复", sections: ["decision", "reply", "interrupt"] },
+  { key: "conversation", label: "对话与回复", sections: ["decision", "reply", "interrupt", "sessions"] },
   { key: "memory", label: "记忆与学习", sections: ["memory", "habits", "learning", "research"] },
   { key: "knowledge", label: "知识与工具", sections: ["tools", "dota"] },
-  { key: "system", label: "模型、预算与日志", sections: ["models", "budget", "logs"] },
+  { key: "system", label: "模型、预算与日志", sections: ["models", "budget", "logs", "media"] },
 ];
 
 function configGroups(schema) {
@@ -484,6 +491,7 @@ async function renderOverview(token) {
     ),
     btn("查看完整用量", () => pageChange("usage"), "small"),
   );
+  const dotaEnabled = s.dota?.state !== "已关闭";
   const external = h(
     "div",
     { class: "panel" },
@@ -495,7 +503,7 @@ async function renderOverview(token) {
       badge(s.dota?.state || "未同步"),
       s.dota?.date ? " " + s.dota.date : "",
     ),
-    [
+    dotaEnabled ? [
       ["public", "OpenDota · 公开/段位胜率"],
       ["weekly", "Valve · 分组周统计"],
       ["matchups", "Valve · 对抗/同队"],
@@ -509,17 +517,19 @@ async function renderOverview(token) {
         data?.date ? " " + data.date + (data.date !== s.today ? "（非今日）" : "") : "",
         data?.weighted_win_rate_pct !== undefined ? ` · 加权 ${Number(data.weighted_win_rate_pct).toFixed(2)}%` : "",
         data?.reason ? h("div", {}, data.reason) : null,
+        data?.expected_pairs ? h("div", {}, `有效配对 ${fmt(data.valid_pairs)} / ${fmt(data.expected_pairs)}（${data.coverage_pct}%）`) : null,
+        data?.expected_pairs ? h("div", {}, "最近完整快照 " + (data.last_complete_date || "暂无")) : null,
         data?.success_date && !data.date ? h("div", {}, "最近成功日期 " + data.success_date) : null,
         data?.last_attempt ? h("div", {}, "最近尝试 " + data.last_attempt.replace("T", " ")) : null,
         data?.next_attempt && data.state !== "同步中"
           ? h("div", {}, "自动重试最早 " + data.next_attempt.replace("T", " ")) : null,
-        data?.failure_kind && data.next_manual_attempt
+        (data?.failure_kind || data?.partial) && data.next_manual_attempt
           ? h("div", {}, "再次手动同步最早 " + data.next_manual_attempt.replace("T", " ")) : null,
       );
-    }),
-    h("p", {}, "Dota 版本资料：", badge(s.dota_knowledge?.state || "未同步"),
-      s.dota_knowledge?.patch ? " · " + s.dota_knowledge.patch : ""),
-    [["hero", "英雄与技能"], ["item", "装备与合成"]].map(([key, title]) => {
+    }) : null,
+    dotaEnabled ? h("p", {}, "Dota 版本资料：", badge(s.dota_knowledge?.state || "未同步"),
+      s.dota_knowledge?.patch ? " · " + s.dota_knowledge.patch : "") : null,
+    dotaEnabled ? [["hero", "英雄与技能"], ["item", "装备与合成"]].map(([key, title]) => {
       const data = s.dota_knowledge?.[key];
       const n = Number(data?.total || 0), done = Number(data?.done || 0);
       return h("div", {class:"help"},
@@ -530,9 +540,19 @@ async function renderOverview(token) {
         data?.latest_published ? " · 可用版本 " + data.latest_published + "（共 " + data.versions + " 版）" : "",
         n ? h("div", {class:"progress"}, h("i", {style:"width:" + Math.min(100, done/n*100) + "%"})) : null
       );
-    }),
+    }) : null,
     s.dota_knowledge?.reason ? h("div", {class:"help"}, "资料同步异常：" + s.dota_knowledge.reason) : null,
     s.dota_knowledge?.failures ? h("div", {class:"help"}, "本批失败 " + fmt(s.dota_knowledge.failures) + " 项，保留已提交资料，稍后重试。") : null,
+    (s.dota_samples || []).map((entry) => h("div", {class:"help"},
+      ({
+        opendota_pro:"OpenDota 职业样本",
+        opendota_match_detail:"OpenDota 比赛明细",
+        opendota_item_popularity:"OpenDota 购买频次",
+      })[entry.source] + "：", badge(entry.state),
+      entry.sample_count != null ? " · " + fmt(entry.sample_count) + " 场" : "",
+      entry.observed_at ? " · " + entry.observed_at.replace("T", " ") : "",
+      entry.stale ? "（缓存已过期）" : "",
+      entry.reason ? " · " + entry.reason : "")),
     h(
       "p",
       {},
@@ -546,8 +566,9 @@ async function renderOverview(token) {
     h(
       "div",
       { class: "toolbar" },
-      btn("同步 Dota 统计", () => runAction("dota_sync")),
-      btn("同步 Dota 版本资料", () => runAction("dota_knowledge")),
+      dotaEnabled ? btn("同步 Dota 统计", () => runAction("dota_sync")) : null,
+      dotaEnabled ? btn("同步 Dota 版本资料", () => runAction("dota_knowledge")) : null,
+      dotaEnabled ? btn("检测 OpenDota 样本来源", () => runAction("dota_sample_probe")) : null,
       btn("检查余额", () => runAction("balance_check")),
     ),
     h(
@@ -575,6 +596,17 @@ async function renderOverview(token) {
     ...(s.config_error ? [h("div", { class: "warning" }, s.config_error)] : []),
     cards,
     h("div", { class: "grid-two" }, budget, external),
+    ...(s.embedding ? [panel("语义向量索引",
+      h("p", {}, `${label(s.embedding.state)} · ${s.embedding.provider || "未选择 Provider"} · 已索引 ${fmt(s.embedding.indexed)} · 待处理 ${fmt(s.embedding.pending)}`),
+      s.embedding.max_texts ? h("p", {class: "help"}, `每次最多 ${s.embedding.max_texts} 条 · 维度 ${s.embedding.dimension || "待验证"}`) : null,
+      table(["会话", "已索引", "待处理", "故障", "下次重试"],
+        (s.embedding.scopes || []).map(x => [x.scope, fmt(x.indexed), fmt(x.pending), label(x.error_kind), x.retry_at || "—"])),
+    )] : []),
+    ...((s.decision_activity || []).length ? [panel("群聊活跃度",
+      table(["会话", "活动档位", "有效采样率", "近期发言人数"],
+        s.decision_activity.map(x => [x.scope, label(x.activity), `${(100 * x.probability).toFixed(1)}%`, fmt(x.speakers)])),
+    )] : []),
+
     panel(
       "数据维护",
       h(
@@ -828,6 +860,38 @@ function kbEditor(values, change) {
   rebuild();
   return outer;
 }
+function mediaFields(kind, value, update) {
+  const names = {provider: "Provider", enabled: "启用", allowed_groups: "授权群",
+    allow_private: "允许已接管私聊", max_units: "单次上限", daily_units: "每日上限",
+    scope_daily_units: "每个会话每日上限", timeout_seconds: "超时秒数", price_per_unit: "每单位估算价（元）",
+    free_only: "仅限本地免费额度", free_units_per_day: "每日免费限额", free_until: "免费有效期（YYYY-MM-DD）",
+    size: "绘图尺寸", fallback_text: "合成失败时回退文字", text_with_audio: "同时提交文字"};
+  const draft = clone(value);
+  const set = (key, val) => { draft[key] = val; update(clone(draft)); };
+  return h("div", {class: "media-fields"}, Object.entries(draft).map(([key, v]) => {
+    let control;
+    if (typeof v === "boolean") control = check(names[key], v, val => set(key, val));
+    else if (key === "allowed_groups") control = textarea(v.join("\n"), text => set(key,
+      text.split("\n").map(x => x.trim()).filter(Boolean)), 2);
+    else if (key === "provider" && ["stt", "tts"].includes(kind)) {
+      const options = (state.config.options?.[kind + "_provider"] || []).map(x => [x.id, x.label]);
+      if (kind === "stt") options.push(["fun-asr-flash-2026-06-15", "百炼 Fun-ASR Flash 短语音"]);
+      if (v && !options.some(entry => entry[0] === v)) options.push([v, v]);
+      control = selected(v, [["", "未选择"], ...options], val => set(key, val));
+    } else if (key === "provider" && kind === "image")
+      control = selected(v, ["wan2.7-image", "wan2.7-image-pro"], val => set(key, val));
+    else if (key === "provider" && kind === "omni")
+      control = selected(v, ["qwen3.8-omni-flash", "qwen3.5-omni-plus"], val => set(key, val));
+    else if (key === "size") control = selected(v, ["1024*1024", "1280*720", "720*1280", "2048*2048"],
+      val => set(key, val));
+    else if (typeof v === "number") control = h("input", {type: "number", min: 0,
+      step: key === "price_per_unit" ? "any" : 1, value: v,
+      oninput: e => { if (e.target.value !== "") set(key, Number(e.target.value)); }});
+    else control = input(v, val => set(key, val));
+    return line(typeof v === "boolean" ? "" : (names[key] || key), control);
+  }));
+}
+
 function fieldControl(group, f) {
   const section = (state.draft[group.key] ||= {});
   const val = section[f.key] ?? clone(f.default);
@@ -835,6 +899,7 @@ function fieldControl(group, f) {
     section[f.key] = v;
     markDirty();
   };
+  if (group.key === "media" && f.type === "object") return mediaFields(f.key, val, update);
   if (f.widget === "kb_bindings") return kbEditor(clone(val), update);
   if (
     f.widget === "chat_provider" ||
@@ -948,6 +1013,53 @@ function drawFields(container) {
   if (!container.children.length)
     container.append(h("p", { class: "empty" }, "没有匹配的配置字段"));
 }
+async function editScenario() {
+  await refreshSessions();
+  const presets = state.config.presets || {};
+  const presetNames = {quiet: "安静熟人群", normal: "普通聊天群", busy: "高流量群", questions: "问答为主"};
+  const scopeChoices = [["", "全局配置"], ...(state.sessions || []).map(item => [
+    item.scope, `${item.kind === "private" ? "私聊" : "群聊"} · ${item.location} · ${item.persona}`,
+  ])];
+  const preview = h("div");
+  const scope = selected("", scopeChoices, refresh);
+  const preset = selected("", [["", "选择预设"], ...Object.keys(presets).map(key => [key, presetNames[key] || key])], refresh);
+  const names = {ordinary_check_probability: "普通采样率", dynamic_enabled: "动态采样",
+    max_unsolicited_replies: "主动回复次数", unsolicited_gap_seconds: "主动回复间隔"};
+  function selectedOverride() {
+    return state.draft.sessions?.overrides?.[scope.value] || {};
+  }
+  function refresh() {
+    const current = selectedOverride();
+    const changes = presets[preset.value]?.decision || {};
+    const rows = Object.entries(changes).map(([key, value]) => [
+      names[key] || key, JSON.stringify(current.decision?.[key] ?? state.draft.decision[key]),
+      JSON.stringify(value), key in (current.decision || {}) ? "会话覆盖" : "全局继承",
+    ]);
+    preview.replaceChildren(table(["字段", "当前生效", "拟应用", "当前来源"], rows));
+    if (scope.value && Object.keys(current).length) {
+      preview.append(btn("移除该会话覆盖", () => {
+        delete state.draft.sessions.overrides[scope.value];
+        markDirty();
+        refresh();
+      }, "small"));
+    }
+  }
+  refresh();
+  showDialog("场景预设与会话覆盖", [line("应用范围", scope), line("预设", preset),
+    h("p", {class: "help"}, "预览仅列行为字段。应用写入草稿，保存配置后生效。"),
+    preview], async () => {
+    const change = presets[preset.value];
+    if (!change) throw new Error("请选择预设");
+    if (scope.value) {
+      const overrides = (state.draft.sessions ||= {overrides: {}}).overrides;
+      const existing = overrides[scope.value] || {};
+      overrides[scope.value] = {...existing, decision: {...existing.decision, ...change.decision}};
+    } else Object.assign(state.draft.decision, change.decision);
+    markDirty();
+    drawConfig();
+  }, "应用到草稿");
+}
+
 function drawConfig() {
   const form = state.editMode === "form";
   const groupContainer = h("div");
@@ -1008,6 +1120,7 @@ function drawConfig() {
     h(
       "div",
       { class: "toolbar" },
+      form && state.config.presets ? btn("场景预设与会话覆盖", () => safe(editScenario), "small") : null,
       btn("复制完整 JSON", copyJson, "small"),
       btn("导入 JSON 文件", chooseFile, "small"),
       btn("导出 JSON", exportJson, "small"),
@@ -1456,6 +1569,7 @@ async function renderMemory(token) {
         "div",
         { class: "toolbar" },
         btn("＋ 手动添加记忆", () => editMemory(null), "primary"),
+        btn("人格数据管理", editPersonaMerge, "small"),
         btn("整理一批", () => runAction("memory_flush", f.scope), "small"),
       ),
       filterToolbar("memory", [kind, stat]),
@@ -1473,6 +1587,150 @@ async function renderMemory(token) {
       pager(f, rows.length, () => pageChange("memory")),
     ),
   );
+}
+async function editPersonaMerge() {
+  await safe(async () => {
+    const token = state.epoch;
+    const result = await get("personas/merge_options");
+    if (!still(token)) return;
+    const personas = result.personas || [];
+    if (personas.length < 2) {
+      showDialog("人格数据管理", [
+        h("p", { class: "help" }, "请先在同一授权会话中分别使用两个人格，系统需要已有的来源和目标会话。"),
+      ], null);
+      return;
+    }
+    const names = {
+      people: "人物和唯一别名", memories: "记忆", relationships: "人格关系",
+      interactions: "会话互动", styles: "已批准表达", research: "公开学习笔记",
+    };
+    const statuses = { copy: "可复制", conflict: "冲突", identical: "目标已有", imported: "已迁移" };
+    const enabled = new Set(["people", "memories", "relationships"]);
+    const choices = new Map();
+    const output = h("div", {});
+    const scope = selected("", [], reset);
+    const options = [["", "请选择"], ...personas.map((person) => [person.id, person.id])];
+    const source = selected("", options, refreshScopes);
+    const target = selected("", options, refreshScopes);
+    let revision = 0;
+    let plan = null;
+    let currentSpec = null;
+
+    function reset() {
+      ++revision;
+      plan = null;
+      choices.clear();
+      output.replaceChildren();
+    }
+    function chatKey(chat) {
+      return JSON.stringify([chat.platform, chat.platform_id, chat.kind, chat.location]);
+    }
+    function chatLabel(chat) {
+      return (chat.kind === "private" ? "私聊 " : "群聊 ") + chat.location + " · " + chat.platform_id;
+    }
+    function refreshScopes() {
+      reset();
+      const from = personas.find((person) => person.id === source.value)?.sessions || [];
+      const to = new Set((personas.find((person) => person.id === target.value)?.sessions || []).map(chatKey));
+      scope.replaceChildren(h("option", { value: "" }, "全部匹配会话"),
+        ...from.filter((chat) => to.has(chatKey(chat)))
+          .map((chat) => h("option", { value: chat.scope }, chatLabel(chat))));
+    }
+    refreshScopes();
+
+    function projectRow(item, sessions) {
+      const info = [h("strong", {}, item.title),
+        h("small", { class: "help" }, item.scope ? chatLabel(sessions.get(item.scope)) : "该人格的公开资料")];
+      let control = label(statuses[item.status]);
+      if (item.status === "copy")
+        control = check("复制", true, (value) => {
+          if (value) choices.set(item.id, { id: item.id, choice: "copy" });
+          else choices.delete(item.id);
+        });
+      if (item.status === "conflict") {
+        const values = { ...item.target };
+        const manual = h("div", { hidden: true });
+        const setValue = (key, value) => { values[key] = value; };
+        const textFields = { title: "标题", full_text: "完整记忆", gist: "要旨", trace: "印象" };
+        if (item.kind === "memories") {
+          for (const [key, name] of Object.entries(textFields))
+            manual.append(line(name, textarea(values[key], (value) => setValue(key, value), 2)));
+        } else {
+          manual.append(
+            line("关系", selected(values.role, [["member", "普通群友"], ["friend", "朋友"]],
+              (value) => setValue("role", value))),
+            line("好感", input(values.affinity, (value) => setValue("affinity", value.trim() ? Number(value) : null),
+              "0–100", "number")),
+            line("熟悉度", selected(values.familiarity_override,
+              [["auto", "自动"], ["stranger", "陌生"], ["normal", "普通"], ["familiar", "熟悉"], ["close", "亲近"]],
+              (value) => setValue("familiarity_override", value))),
+          );
+        }
+        control = h("details", {},
+          h("summary", {}, "查看冲突与处理方式"),
+          h("p", {}, "来源"),
+          h("pre", {}, item.kind === "memories" ? Object.keys(textFields)
+            .map((key) => textFields[key] + " " + item.source[key]).join("\n") : JSON.stringify(item.source)),
+          h("p", {}, "目标"),
+          h("pre", {}, item.kind === "memories" ? Object.keys(textFields)
+            .map((key) => textFields[key] + " " + item.target[key]).join("\n") : JSON.stringify(item.target)),
+          selected("target", [["target", "保留目标"], ["source", "使用来源"], ["manual", "手工合并"]], (value) => {
+            manual.hidden = value !== "manual";
+            if (value === "target") choices.delete(item.id);
+            else choices.set(item.id, { id: item.id, choice: value, ...(value === "manual" ? { values } : {}) });
+          }),
+          manual,
+        );
+      }
+      return [h("div", {}, ...info), names[item.kind], statuses[item.status], control];
+    }
+
+    async function preview() {
+      reset();
+      const request = revision;
+      currentSpec = { source: source.value, target: target.value, scope: scope.value, sections: [...enabled] };
+      const next = await post("personas/merge_preview", currentSpec);
+      if (request !== revision || !still(token) || !$("dialog").open) return;
+      plan = next;
+      const sessions = new Map(plan.sessions.map((chat) => [chat.scope, chat]));
+      for (const item of plan.items) {
+        if (item.status === "copy") choices.set(item.id, { id: item.id, choice: "copy" });
+      }
+      output.replaceChildren(
+        h("p", { class: "help" }, "匹配会话 " + plan.sessions.length + " 个 · 预览 " + plan.items.length
+          + " 项 · 因身份/权限/习惯同意跳过的记忆 " + (plan.skipped?.memory_permission || 0) + " 条"),
+        table(["项目 / 会话", "类别", "状态", "操作"], plan.items.map((item) => projectRow(item, sessions))),
+      );
+    }
+
+    showDialog("人格数据管理", [
+      h("p", { class: "help" }, "仅复制已授权的匹配现有会话数据。源人格、目标安全设置、原始消息与用量账本都会保留。冲突默认保留目标。"),
+      line("来源人格", source),
+      line("目标人格", target),
+      line("来源会话", scope),
+      h("div", { class: "toolbar" }, ...Object.entries(names)
+        .filter(([key]) => key !== "interactions")
+        .map(([key, title]) => check(title, enabled.has(key), (value) => {
+          if (value) enabled.add(key);
+          else enabled.delete(key);
+          reset();
+        }))),
+      btn("只读预览", () => safe(preview)),
+      output,
+    ], async () => {
+      if (!plan || !choices.size) throw new Error("请先预览并选择要复制或处理的项目");
+      if (!confirm("确定将所选的 " + choices.size + " 项数据写入目标人格？系统将先创建一致性备份。"))
+        throw new Error("已取消确认，数据库未修改");
+      const report = await post("personas/merge_apply", {
+        ...currentSpec, revision: plan.revision, actions: [...choices.values()], confirm: true,
+      });
+      if (still(token)) await renderMemory(token);
+      notice("人格合并完成 · " + Object.entries(report.counts).filter(([key, value]) => names[key] && value)
+        .map(([key, value]) => names[key] + " " + value + " 项").join("、")
+        + " · 已处理冲突 " + report.conflicts_resolved + " 项 · 备份 persona_merge_backups/" + report.backup,
+        "good");
+    }, "确认合并");
+  });
 }
 async function editMemory(r) {
   const token = state.epoch;
@@ -1845,6 +2103,12 @@ async function renderUsage(token) {
       ),
       ...bars,
     ),
+    ...((res.media || []).length ? [panel("媒体用量",
+      table(["日期", "能力", "Provider", "用量（含估算）", "成功 / 失败 / 未知 / 取消", "估算费用 CNY"],
+        res.media.map(row => [row.day, label(row.kind), row.provider,
+          `${fmt(row.used)} ${label(row.unit)} · ${fmt(row.estimated_units)} 估算 · ${fmt(row.pending_units)} 预留`,
+          `${row.success} / ${row.failed} / ${row.unknown} / ${row.cancelled}`, row.cost_cny_estimate ?? "未配置"])),
+    )] : []),
     panel(
       "每日用量明细",
       h("p", { class: "help" }, res.note || ""),
@@ -1911,6 +2175,7 @@ async function renderLogs(token) {
         "TOKEN",
         "TOOL",
         "VISION",
+        "MEDIA",
         "DOTA",
         "BALANCE",
         "CONFIG",
@@ -2015,7 +2280,7 @@ async function renderResearch(token){
   const sources=(result.source_status||[]).map(s=>[
     s.label,
     label(s.last_source),
-    badge(({ok:"上次可用",failed:"连接/解析失败",empty:"暂无资料",retry_due:"待重试",untested:"尚未检测"})[s.state]||s.state,
+    badge(({ok:"上次可用",failed:"连接/解析失败",empty:"暂无资料",retry_due:"待重试",untested:"尚未检测",unavailable:"未接入"})[s.state]||s.state,
       s.state==="ok"?"good":s.state==="failed"?"bad":s.state==="untested"?"":"warn"),
     dt(s.checked_at),
     s.cooling?dt(s.retry_after):"—",

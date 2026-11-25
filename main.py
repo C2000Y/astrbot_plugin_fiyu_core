@@ -12,6 +12,8 @@ from astrbot.api.web import json_response, request
 from .core.config import ConfigError, defaults
 from .core.engine import Engine
 from .core.memory import manual_proposal
+from .core.persona_merge import PersonaMerge
+from .core.session_config import PRESETS
 from .core.util import day_key
 from .host import AstrHost
 
@@ -113,6 +115,9 @@ class FiyuCore(Star):
             "users/identity/save": (self.api_save_identity, "POST"),
             "users/legacy_preview": (self.api_legacy_preview, "POST"),
             "users/legacy_apply": (self.api_legacy_apply, "POST"),
+            "personas/merge_options": (self.api_persona_merge_options, "GET"),
+            "personas/merge_preview": (self.api_persona_merge_preview, "POST"),
+            "personas/merge_apply": (self.api_persona_merge_apply, "POST"),
             "memories": (self.api_memories, "GET"),
             "memories/versions": (self.api_versions, "GET"),
             "memories/save": (self.api_save_memory, "POST"),
@@ -166,6 +171,7 @@ class FiyuCore(Star):
             result["options"] = await self.engine.host.options()
         except Exception:
             result["options"] = {}
+        result["presets"] = PRESETS
         return json_response(result)
 
     async def api_defaults(self):
@@ -285,6 +291,38 @@ class FiyuCore(Star):
             return json_response({"ok":True,**result})
         except ValueError as e:
             return fail(e)
+
+    async def api_persona_merge_options(self):
+        if not self.ready():
+            return fail("插件未就绪", 503)
+        merger = PersonaMerge(self.engine.store, self.engine.config)
+        return json_response(await asyncio.to_thread(merger.options))
+
+    async def api_persona_merge_preview(self):
+        if not self.ready():
+            return fail("插件未就绪", 503)
+        try:
+            merger = PersonaMerge(self.engine.store, self.engine.config)
+            return json_response({"ok": True, **await asyncio.to_thread(merger.preview, await self.body())})
+        except ValueError as exc:
+            return fail(exc)
+        except sqlite3.Error:
+            return fail("读取人格数据失败，请检查数据库后重新预览", 500)
+
+    async def api_persona_merge_apply(self):
+        if not self.ready():
+            return fail("插件未就绪", 503)
+        try:
+            merger = PersonaMerge(self.engine.store, self.engine.config)
+            result = await asyncio.to_thread(merger.apply, await self.body())
+            self.engine.log.emit("MEMORY", "persona_merge_applied",
+                                 count=sum(result["counts"][key] for key in
+                                           ("people", "memories", "relationships", "styles", "research", "interactions")))
+            return json_response({"ok": True, **result})
+        except ValueError as exc:
+            return fail(exc)
+        except (OSError, sqlite3.Error):
+            return fail("人格合并写入失败。请检查数据库和存储空间后重新预览", 500)
 
     async def api_research(self):
         if not self.ready():
@@ -430,6 +468,7 @@ class FiyuCore(Star):
         return json_response(
             {
                 "items": rows,
+                "media": await self.engine.media.overview(self.qint("days", 15, 1, 90)),
                 "note": "用量由 Provider 返回；缺失/embedding 为估算，价格为手动配置的估算，非账单。",
             }
         )

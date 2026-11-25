@@ -12,6 +12,7 @@ from pathlib import Path
 
 from aiohttp import ClientConnectionError
 
+from .embedding import EmbeddingProtocolError, EmbeddingResult, batches, embedding_profile, validated_vectors
 from .util import MAX_REPLY_CHARS, clean, conservative_tokens, day_key, dump, stamp
 
 
@@ -270,6 +271,9 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+REPLY_MODULES = ("reply", "reply_casual", "reply_deep")
+
+
 class ModelGateway:
     """One place for timeouts, accounting, soft priorities and concurrency limits."""
 
@@ -286,10 +290,18 @@ class ModelGateway:
     async def provider(self, module: str, umo: str, config: dict | None = None) -> str:
         cfg = config or self.cfg.snapshot()
         m = cfg["models"]
-        if module in ("vision", "vision_observe"):
-            if not m["vision_provider"]:
+        strict_provider = {
+            "vision": "vision_provider",
+            "vision_observe": "vision_provider",
+            "ocr": "ocr_provider",
+            "reply_casual": "casual_provider",
+            "reply_deep": "deep_provider",
+        }.get(module)
+        if strict_provider:
+            provider = m.get(strict_provider)
+            if not provider:
                 raise ModelFailure("provider_unavailable")
-            return m["vision_provider"]
+            return provider
         if module == "embedding":
             return m["embedding_provider"]
         preferred = {
@@ -324,13 +336,21 @@ class ModelGateway:
             def calls_used(task):
                 return usage["modules"].get(task, 0) + self.reserved_calls[(d, task)]
 
-            limit_module = "vision" if module == "vision_observe" else module
-            module_limit = settings["module_call_limits"].get(limit_module, 0)
-            counted_modules = (
-                ("vision", "vision_observe") if limit_module == "vision" else (module,)
+            limit_module = "vision" if module == "vision_observe" else (
+                "reply" if module in REPLY_MODULES else module
             )
+            module_limit = settings["module_call_limits"].get(limit_module, 0)
+            counted_modules = {
+                "vision": ("vision", "vision_observe"),
+                "reply": REPLY_MODULES,
+            }.get(limit_module, (module,))
             if module_limit and sum(calls_used(task) for task in counted_modules) >= module_limit:
                 raise BudgetExceeded("该模块今日调用次数已达上限")
+            if module == "reply_deep" and (
+                not live["models"].get("deep_provider")
+                or calls_used(module) >= live["models"].get("deep_daily_calls", 0)
+            ):
+                raise BudgetExceeded("独立复杂推理已关闭或达到每日调用上限")
             if module == "vision_observe":
                 reply = live["reply"]
                 if (
@@ -377,7 +397,7 @@ class ModelGateway:
             self.condition.notify_all()
 
     async def _record(
-        self, day, module, provider, estimate, failed, usage, elapsed, scope, failure=None
+        self, day, module, provider, estimate, failed, usage, elapsed, scope, failure=None, items=None
     ):
         other, cached, output, estimated = usage
         async with self.lock:
@@ -413,6 +433,7 @@ class ModelGateway:
             estimated=estimated,
             elapsed_ms=int(elapsed * 1000),
             failed=failed,
+            **({"items": items} if items is not None else {}),
             **(failure.log_fields() if failure else {}),
         )
 
@@ -520,33 +541,79 @@ class ModelGateway:
             finally:
                 await self._release()
 
-    async def embed(
-        self, umo: str, texts: list[str], *, scope="", background=False, config=None
-    ):
+    def embedding_profile(self, config=None):
         cfg = config or self.cfg.snapshot()
         pid = cfg["models"]["embedding_provider"]
-        if not pid or not texts:
-            return []
+        if not pid:
+            return None
+        describe = getattr(self.host, "embedding_metadata", None)
+        if describe:
+            metadata = describe(pid)
+        else:
+            fingerprint = self.host.embedding_fingerprint(pid)
+            metadata = {"identity": fingerprint, "model": ""} if fingerprint else None
+        if not metadata:
+            return None
+        return embedding_profile(pid, metadata, cfg["models"].get("embedding_limits", {}))
+
+    async def embed(self, umo: str, texts: list[str], **kwargs):
+        result = []
+        async for _, vectors in self.embed_batches(umo, texts, **kwargs):
+            result.extend(vectors)
+        return result
+
+    async def embed_batches(
+        self, umo, texts, *, scope="", background=False, config=None, profile=None, authorize=None
+    ):
+        if not texts:
+            return
+        cfg = config or self.cfg.snapshot()
+        if not cfg["models"]["embedding_provider"]:
+            return
+        profile = profile or self.embedding_profile(cfg)
+        if profile is None:
+            raise ModelFailure("provider_unavailable")
+        expected = 0
+        for start, batch in batches(profile, texts):
+            vectors, dimension = await self._embed_request(
+                profile, batch, cfg, scope, background, expected, authorize
+            )
+            expected = dimension
+            yield start, vectors
+
+    async def _embed_request(self, profile, texts, cfg, scope, background, expected, authorize):
+        pid = profile.provider
         estimate = sum(conservative_tokens(t) for t in texts)
         await self._acquire(background)
         d = None
         started = time.monotonic()
         failed = True
+        accounted = (estimate, 0, 0, True)
+        failure = None
         try:
+            if self.embedding_profile() != profile or (authorize and not await authorize()):
+                raise BudgetExceeded("Embedding Provider 或会话授权已变化")
             d = await self._reserve("embedding", estimate, background, False)
-            vectors = await asyncio.wait_for(
-                self.host.embed(pid, texts), timeout=cfg["models"]["timeout_seconds"]
-            )
-            if len(vectors) != len(texts) or any(
-                not isinstance(v, list)
-                or not v
-                or len(v) > 8192
-                or any(type(x) not in (int, float) or not -1e10 <= x <= 1e10 for x in v)
-                for v in vectors
-            ):
-                raise ValueError("Embedding 响应无效")
+            try:
+                response = await asyncio.wait_for(
+                    self.host.embed(pid, texts), timeout=cfg["models"]["timeout_seconds"]
+                )
+                vectors = response
+                if isinstance(response, EmbeddingResult):
+                    vectors = response.vectors
+                    if type(response.input_tokens) is int and 0 < response.input_tokens < 10**12:
+                        accounted = (response.input_tokens, 0, 0, False)
+                dimension = validated_vectors(vectors, len(texts), profile)
+                if expected and dimension != expected:
+                    raise EmbeddingProtocolError("Embedding 子批之间维度变化")
+            except EmbeddingProtocolError:
+                failure = ModelFailure("invalid_response")
+                raise failure from None
+            except Exception as exc:
+                failure = _model_failure(exc)
+                raise failure from None
             failed = False
-            return vectors
+            return vectors, dimension
         finally:
             try:
                 if d:
@@ -556,9 +623,11 @@ class ModelGateway:
                         pid,
                         estimate,
                         failed,
-                        (estimate, 0, 0, True),
+                        accounted,
                         time.monotonic() - started,
                         scope,
+                        failure,
+                        items=len(texts),
                     )
             finally:
                 await self._release()

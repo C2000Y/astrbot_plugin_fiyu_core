@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .media_policy import MEDIA_LABELS, media_defaults, valid_origin, validate_media
+from .session_config import OVERRIDE_FIELDS
 from .util import CN_TZ, MAX_REPLY_CHARS, atomic_json, dump, read_json
 
 
@@ -175,6 +177,18 @@ SCHEMA = [
                 "空值使用会话当前聊天模型。",
                 widget="chat_provider",
             ),
+            field("casual_provider", "闲聊角色模型 Provider ID", "",
+                  "仅用于不需要工具的简短社交对话。留空使用主聊天模型。",
+                  widget="chat_provider"),
+            field("casual_context_chars", "闲聊模型消息上下文字数", 6000,
+                  "历史消息的字符预算；人格、相关记忆与少量场景示例另计。",
+                  low=800, high=24000),
+            field("deep_provider", "复杂推理模型 Provider ID", "",
+                  "仅用于明确的复杂纯文本推理。留空使用主聊天模型。",
+                  widget="chat_provider"),
+            field("deep_daily_calls", "复杂推理模型每日调用上限", 5,
+                  "选定模型后生效。0=停用独立复杂推理，仍可使用主聊天模型。",
+                  low=0, high=1000),
             field(
                 "decision_provider",
                 "读空气模型 Provider ID",
@@ -203,6 +217,9 @@ SCHEMA = [
                 "选择已配置、真实支持图片的模型（如 Qwen VL）。空值不主动分析图片。",
                 widget="chat_provider",
             ),
+            field("ocr_provider", "文字识别模型 Provider ID", "",
+                  "仅用于明确的截图文字、文档或表格识别。留空跟随通用视觉。",
+                  widget="chat_provider"),
             field("research_provider", "自主学习模型 Provider ID", "",
                   "留空使用记忆模型或主聊天模型。只用于有限的后台公开资料阅读。",
                   widget="chat_provider"),
@@ -212,6 +229,10 @@ SCHEMA = [
                 "",
                 "可选；留空使用本地中文关键词检索，无额外 embedding 成本。",
                 widget="embedding_provider",
+            ),
+            field(
+                "embedding_limits", "Embedding Provider 能力覆盖", {},
+                "按 Provider ID 填写 max_texts、max_text_tokens、max_batch_tokens 或 expected_dimension。未确认上限时留空，默认每次最多 10 条。",
             ),
             field(
                 "timeout_seconds",
@@ -249,6 +270,22 @@ SCHEMA = [
                 low=0,
                 high=1,
             ),
+            field("dynamic_enabled", "启用群聊流量自适应采样", False,
+                  "仅调整普通群聊批次的采样，私聊、直接请求和续聊保持原优先级。"),
+            field("dynamic_short_seconds", "流量突发短窗口（秒）", 15,
+                  "短窗内消息频率升高时快速降低普通判断概率。", low=3, high=90),
+            field("dynamic_window_seconds", "流量滚动窗口（秒）", 90,
+                  "近期有效消息及不同发言人数的评估范围。", low=15, high=600),
+            field("dynamic_busy_rate", "高流量参考值（条/分钟）", 40,
+                  "用短窗或滚动窗频率估计消息压力。", low=5, high=300),
+            field("dynamic_busy_speakers", "高活跃人数参考值", 5,
+                  "只统计滚动窗口内实际发言的去重人数。", low=2, high=100),
+            field("dynamic_min_probability", "动态采样概率下限", 0.03,
+                  "基础概率为 0 时普通采样始终关闭。", low=0, high=1),
+            field("dynamic_max_probability", "动态采样概率上限", 0.75,
+                  "静默群恢复时也受插话间隔、密度和硬限频约束。", low=0, high=1),
+            field("dynamic_recovery_seconds", "流量回落恢复时间（秒）", 45,
+                  "调高后恢复概率更缓慢，降低突发结束后立即插话的风险。", low=5, high=300),
             field(
                 "name_mode",
                 "名字触发策略",
@@ -920,7 +957,9 @@ SCHEMA = [
                   "暂时排除失败的共享接口，状态跨重启保留；到期才自动再尝试。手动检测可验证网络恢复。", low=5, high=1440),
             field("source_failover", "资料失败时尝试备用主题", True,
                   "同主题接口切换失败后，最多切换到一个其他已授权来源及对应选题；使用原选题模型给出的备选，必要时再选一次。不增加固定调用。"),
-            field("sources", "允许的自主学习来源", ["dota_news", "dota_pro", "dota_meta", "cs2_news"], "可选 dota_news / dota_pro / dota_meta / cs2_news。留空不执行。", widget="lines"),
+            field("sources", "允许的自主学习来源", ["dota_news", "dota_pro", "dota_meta", "cs2_news"],
+                  "可选 dota_news / dota_pro / dota_meta / dota_pro_cache / cs2_news。dota_pro_cache 仅读已校验的本地职业比赛样本。关闭 Dota 模块时仅使用其他领域来源。留空不执行。",
+                  widget="lines"),
             field("interests", "自主研究兴趣", ["Dota 2 职业比赛、英雄评价与版本", "CS2 版本及电竞动态"], "由人格自行选择具体问题；不设每天必须完成的主题。", widget="lines"),
             field("dedupe_days", "相同主题/证据冷却天数", 7, "同一段时间重复的主题或数据不再整理。", low=1, high=30),
             field("note_days", "知识笔记有效天数", 30, "过期内容保留可查，但不自动当成当前版本事实。", low=1, high=180),
@@ -977,6 +1016,7 @@ SCHEMA = [
                     "memory": 0,
                     "style": 0,
                     "vision": 0,
+                    "ocr": 0,
                     "embedding": 0,
                     "research": 0,
                 },
@@ -1047,6 +1087,20 @@ SCHEMA = [
                 high=168,
             ),
         ],
+    },
+    {
+        "key": "media", "label": "媒体能力与用量",
+        "fields": [
+            field("api_origin", "百炼地域地址", "https://dashscope.aliyuncs.com",
+                  "独立接口使用宿主环境变量 FIYU_DASHSCOPE_API_KEY。配置填写地域地址，密钥留在部署环境。"),
+            *[field(kind, title, media_defaults(kind),
+                    "默认关闭。填写授权会话、Provider、每次与每日额度、超时及估算价格。")
+              for kind, title in MEDIA_LABELS.items()],
+        ],
+    },
+    {
+        "key": "sessions", "label": "按会话行为",
+        "fields": [field("overrides", "会话覆盖", {}, "按作用域选择行为。移除覆盖后继承全局配置。")],
     },
     {
         "key": "logs",
@@ -1141,6 +1195,17 @@ def validate(raw: Any) -> dict:
     a, d, r, m, b = [
         cfg[k] for k in ("access", "decision", "reply", "memory", "budget")
     ]
+    embedding_limits = cfg["models"]["embedding_limits"]
+    limits = {"max_texts": 256, "max_text_tokens": 250000,
+              "max_batch_tokens": 1000000, "expected_dimension": 8192}
+    if len(embedding_limits) > 40 or any(
+        not isinstance(pid, str) or not pid.strip() or len(pid) > 160
+        or not isinstance(values, dict) or not values or set(values) - set(limits)
+        or any(type(value) is not int or not 1 <= value <= limits[setting]
+               for setting, value in values.items())
+        for pid, values in embedding_limits.items()
+    ):
+        raise ConfigError("models.embedding_limits 需要以 Provider ID 为键的有效能力上限")
     legacy_reply = raw.get("reply", {})
     if "split_on_newline" not in legacy_reply and legacy_reply.get("split_chars") == 150:
         r["split_chars"] = DEFAULT_SPLIT_CHARS
@@ -1154,6 +1219,10 @@ def validate(raw: Any) -> dict:
         or d["merge_max_wait_seconds"] < d["merge_wait_seconds"]
     ):
         raise ConfigError("消息队列和最大等待必须不小于单批数量及静默等待")
+    if d["dynamic_short_seconds"] > d["dynamic_window_seconds"]:
+        raise ConfigError("流量短窗口不能大于滚动窗口")
+    if d["dynamic_min_probability"] > d["dynamic_max_probability"]:
+        raise ConfigError("动态采样概率下限不能大于上限")
     if r["gap_min"] > r["gap_max"]:
         raise ConfigError("段间最短延迟不能超过最长延迟")
     if (
@@ -1168,7 +1237,7 @@ def validate(raw: Any) -> dict:
     for key in ("interests", "phrases"):
         social[key] = bounded_strings(social[key], "social." + key, max_items=50, max_len=80)
     research["interests"] = bounded_strings(research["interests"], "research.interests", max_items=20, max_len=120)
-    if set(research["sources"]) - {"dota_news", "dota_pro", "dota_meta", "cs2_news"}:
+    if set(research["sources"]) - {"dota_news", "dota_pro", "dota_meta", "dota_pro_cache", "cs2_news"}:
         raise ConfigError("research.sources 存在未支持的数据来源")
     if habits["min_days"] > habits["window_days"] or habits["stale_days"] > habits["window_days"]:
         raise ConfigError("习惯日期阈值与有效期不能超过观察时间窗")
@@ -1293,6 +1362,34 @@ def validate(raw: Any) -> dict:
             or len(val) > 60
         ):
             raise ConfigError("rank_labels 的键必须是 0..6，标签为短字符串")
+    media = cfg["media"]
+    if not valid_origin(media["api_origin"]):
+        raise ConfigError("media.api_origin 需要已支持的百炼地域或工作空间地址")
+    for kind in MEDIA_LABELS:
+        try:
+            media[kind] = validate_media(kind, media[kind])
+            media[kind]["allowed_groups"] = bounded_strings(media[kind]["allowed_groups"],
+                f"media.{kind}.allowed_groups", max_items=200, max_len=200)
+        except ValueError as exc:
+            raise ConfigError(f"media.{kind} {exc}") from None
+    overrides = cfg["sessions"]["overrides"]
+    by_section = {g["key"]: {f["key"]: f for f in g["fields"]} for g in SCHEMA}
+    if len(overrides) > 250:
+        raise ConfigError("会话覆盖最多 250 项")
+    for scope, override in overrides.items():
+        if not re.fullmatch(r"[a-f0-9]{24}", scope) or not isinstance(override, dict) or override.keys() - OVERRIDE_FIELDS.keys():
+            raise ConfigError("会话覆盖需要有效 scope 与允许的行为字段")
+        for section, values in override.items():
+            if not isinstance(values, dict) or values.keys() - OVERRIDE_FIELDS[section]:
+                raise ConfigError("会话覆盖包含禁止修改的设置")
+            for key, value in values.items():
+                spec = by_section[section].get(key)
+                if (not spec
+                    or (type(value) is not type(spec["default"])
+                        and not (spec["type"] == "number" and type(value) is int))
+                    or ("choices" in spec and value not in spec["choices"])
+                    or ("min" in spec and not spec["min"] <= value <= spec["max"])):
+                    raise ConfigError(f"会话覆盖 {section}.{key} 无效")
     if len(dump(cfg)) > 200000:
         raise ConfigError("配置体积超限")
     return cfg

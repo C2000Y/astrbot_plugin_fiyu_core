@@ -65,7 +65,7 @@ OFFSET = prop("从第几条继续（从0开始，使用上次返回的 next_offs
 
 class ToolRouter:
     def __init__(self, host, store, memory, dota, log, config, research=None):
-        self.host, self.store, self.memory, self.dota, self.log, self.config = (
+        self.host, self.store, self.memory, self._dota, self.log, self.config = (
             host,
             store,
             memory,
@@ -75,6 +75,10 @@ class ToolRouter:
         )
         self.web_cache = OrderedDict()
         self.research = research
+
+    @property
+    def dota(self):
+        return self._dota() if callable(self._dota) else self._dota
 
     def bindings(self, meta, cfg):
         out = {}
@@ -227,8 +231,29 @@ class ToolRouter:
                     ),
                     tool(
                         "query_dota_patch",
-                        "查指定补丁官方公告（英雄、物品或通用）；省略 patch 为最新已核实版本。from_patch 仅在两份完整快照存在时按字段比较同一英雄/物品，勿猜历史。",
+                        "查指定补丁官方公告。from_patch 为精确补丁或 previous（官方目录核实的前一版）；需要两份完整快照，勿猜历史。",
                         {"patch":PATCH,"hero":HERO,"item":prop("物品名/别名",maxLength=100),"from_patch":PATCH,"offset":OFFSET,"limit":LIMIT},
+                    ),
+                    tool(
+                        "query_dota_pro_matches",
+                        "查询 OpenDota 近期职业比赛样本；可按队名、联赛、英雄、最近天数过滤，或查询具体比赛 ID。include_draft 最多查最新三份明细；补丁只按实际明细核实。",
+                        {"hero": HERO, "team": prop("公开战队完整名称", maxLength=100),
+                         "league": prop("公开联赛名称", maxLength=100),
+                         "days": prop("最近天数", "integer", minimum=1, maximum=90),
+                         "patch": PATCH, "match_id": prop("OpenDota 比赛 ID", "integer", minimum=1, maximum=10**15),
+                         "include_draft": prop("查阵容和 BP 样本", "boolean"),
+                         "limit": prop("返回记录数", "integer", minimum=1, maximum=10)},
+                    ),
+                    tool(
+                        "query_dota_item_builds",
+                        "查询指定英雄的 OpenDota 聚合分阶段购买次数，或给定比赛 ID 查实际购买顺序及游戏秒数。位置、段位、补丁、日期交叉分层数据不可用。",
+                        {"hero": HERO, "phase": prop("四个购买阶段", enum=["all","start","early","mid","late"]),
+                         "match_id": prop("指定比赛 ID，只查这一场", "integer", minimum=1, maximum=10**15),
+                         "position": prop("如被要求核对的数据维度", "integer", minimum=1, maximum=5),
+                         "bracket": prop("如被要求核对的数据维度", "integer", minimum=1, maximum=8),
+                         "patch": PATCH, "days": prop("如被要求核对的数据维度", "integer", minimum=1, maximum=90),
+                         "limit": LIMIT, "offset": OFFSET},
+                        ("hero",),
                     ),
                     tool(
                         "get_hero_stats",
@@ -364,6 +389,10 @@ class ToolRouter:
             return await self.dota.mechanics(cfg["dota"], **args)
         if name == "query_dota_patch":
             return await self.dota.patch_changes(cfg["dota"], **args)
+        if name == "query_dota_pro_matches":
+            return await self.dota.pro_matches(cfg["dota"], **args)
+        if name == "query_dota_item_builds":
+            return await self.dota.item_builds(cfg["dota"], **args)
         actions = {
             "get_hero_stats": "hero",
             "rank_hero_stats": "ranking",
@@ -436,7 +465,8 @@ class ToolRouter:
             # No arbitrary functions, filesystem paths or network endpoints are accepted from the model.
             data = await asyncio.wait_for(
                 self._call(name, args, meta, live, event, current, batch),
-                timeout=4 * live["dota"]["network_timeout"] + 8 if name == "query_dota_patch"
+                timeout=6 * live["dota"]["network_timeout"] + 8
+                if name in ("query_dota_patch", "query_dota_pro_matches", "query_dota_item_builds")
                 else 2 * live["dota"]["network_timeout"] + 8
                 if name in ("query_dota_hero", "query_dota_item", "search_dota_mechanics")
                 else 32,
@@ -450,7 +480,8 @@ class ToolRouter:
                 result=dump(data)
                 if len(result)>maximum:
                     result=dump({"notes":[],"note":"见闻结果预算不足，请提高工具结果字符预算。"})
-            elif name in ("get_hero_stats", "rank_hero_stats", "compare_hero_stats", "get_dota_matchups", "get_dota_trends") and isinstance(data, dict):
+            elif name in ("get_hero_stats", "rank_hero_stats", "compare_hero_stats", "get_dota_matchups",
+                          "get_dota_trends", "query_dota_pro_matches", "query_dota_item_builds") and isinstance(data, dict):
                 result = dump(fit_stats_payload(data, maximum))
             elif name in ("query_dota_hero","query_dota_item","search_dota_mechanics","query_dota_patch") and isinstance(data,dict):
                 # Scrub strings separately; preserve actual numeric objects and complete JSON.

@@ -23,7 +23,7 @@ def patch_key(value):
     return (int(match[1]), int(match[2]), match[3]) if match else (0,0,"")
 
 
-def latest_patch(payload):
+def patch_history(payload):
     if not isinstance(payload, dict) or ("success" in payload and payload["success"] not in (True,1)):
         raise ValueError("版本目录请求失败")
     patches = payload.get("patches")
@@ -36,8 +36,12 @@ def latest_patch(payload):
     ]
     if not valid:
         raise ValueError("没有可验证补丁")
-    newest = max(valid, key=lambda p: (p["patch_timestamp"], patch_key(p["patch_number"])))
-    return newest["patch_number"]
+    ordered = sorted(valid, key=lambda p: (p["patch_timestamp"], patch_key(p["patch_number"])), reverse=True)
+    return list(dict.fromkeys(p["patch_number"] for p in ordered))
+
+
+def latest_patch(payload):
+    return patch_history(payload)[0]
 
 
 def api_rows(payload, key):

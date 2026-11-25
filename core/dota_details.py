@@ -20,6 +20,11 @@ NUM_FIELDS = {
     "damages": ("伤害", "AbilityDamage"),
     "durations": ("持续秒", "AbilityDuration"),
 }
+NUM_UNITS = {
+    "cooldowns": "秒", "cast_points": "秒", "channel_times": "秒", "durations": "秒",
+    "mana_costs": "魔法值", "health_costs": "生命值", "gold_costs": "金币",
+    "cast_ranges": "Dota 距离单位", "damages": "伤害点",
+}
 DAMAGE = {1: "physical", 2: "magical", 4: "pure", 8: "hp_removal"}
 IMMUNITY = {1: "ally_yes", 2: "ally_no", 3: "enemy_yes", 4: "enemy_no", 5: "ally_yes_enemy_no"}
 DISPELLABLE = {1: "strong_only", 2: "basic", 3: "not_dispellable"}
@@ -216,7 +221,7 @@ def percent_hint(s, text):
 
 def render_numbers(row, view="full"):
     """Keep level arrays and raw modifier values; never add bonuses by guess."""
-    specials, replacements, stats = [], {}, {}
+    specials, replacements, stats, units = [], {}, {}, {}
     descriptions = " ".join(str(row.get(k) or "") for k in
                             ("desc_loc", "notes_loc", "shard_loc", "scepter_loc"))
     special_lookup = {}
@@ -256,6 +261,7 @@ def render_numbers(row, view="full"):
         # nonzero arrays, and cooldown/mana zero for the numeric view.
         if val and (any(val) or view == "numbers" and field in ("cooldowns", "mana_costs")):
             stats[label] = val
+            units[label] = NUM_UNITS[field]
         if val:
             replacements.setdefault(sub.casefold(), show_values(val))
 
@@ -303,7 +309,12 @@ def render_numbers(row, view="full"):
             out["notes"] = notes
     if view in ("full", "numbers"):
         out["stats"] = stats
+        if units:
+            out["stats_units"] = units
         out["special_values"] = specials
+    if view == "numbers":
+        enum_fields = ("damage", "immunity", "dispellable", "target_team", "type")
+        out["raw_enums"] = {key: row[key] for key in enum_fields if type(row.get(key)) is int}
     if view in ("full", "effects", "upgrades"):
         for field, label, mode in (("shard_loc", "魔晶", "shard"), ("scepter_loc", "神杖", "scepter")):
             if row.get(field):
@@ -409,7 +420,12 @@ def hero_result(hero, cfg, skill="", section="summary", view="full", offset=0, l
     if skill:
         matches, how = resolve_skill(hero, skill, cfg)
         if len(matches) == 1:
-            return {"ability": render_numbers(matches[0], view), "match": how}
+            selected = matches[0]
+            details = render_numbers(selected, view)
+            declared = BUILTIN_ALIASES.get(selected["name"], []) + cfg.get("skill_aliases", {}).get(selected["name"], [])
+            if declared:
+                details["aliases"] = list(dict.fromkeys(declared))[:12]
+            return {"ability": details, "match": how}
         candidates = summary if not matches else [a for a in summary if a["code"] in {m["name"] for m in matches}]
         return {"error": "技能名称/槽位不唯一或未找到", "match": how, "abilities": candidates}
     if section == "talents":
@@ -466,7 +482,7 @@ def fit_knowledge_payload(data, maximum):
     for key in ("ability", "effects"):
         if isinstance(out.get(key), dict) and len(dump(out)) + 160 > maximum:
             record = dict(out[key])
-            for optional in ("raw_flags", "notes", "special_values", "stats", "modifier_note"):
+            for optional in ("raw_flags", "raw_enums", "aliases", "notes", "special_values", "stats_units", "stats", "modifier_note"):
                 if optional in record and len(dump({**out, key:record})) + 160 > maximum:
                     del record[optional]
                     omitted.append(key+"."+optional)

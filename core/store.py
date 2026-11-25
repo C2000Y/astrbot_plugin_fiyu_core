@@ -882,6 +882,16 @@ class Store:
                 return old["id"]
             if not manual:
                 prev_ids = json.loads(old["source_ids"])
+                if p.get("source_ids"):
+                    evidence = json.loads(old["evidence"])
+                    merged_at_seq = max(
+                        (item["target_seq_cutoff"] for item in evidence if isinstance(item, dict)
+                         and type(item.get("target_seq_cutoff")) is int), default=0
+                    )
+                    if max(p["source_ids"]) <= merged_at_seq:
+                        # A learning batch prepared before the merge may have
+                        # spent time awaiting its model. Preserve the merge.
+                        return old["id"]
                 if (
                     prev_ids
                     and p.get("source_ids")
@@ -1284,44 +1294,77 @@ class Store:
                 ((now(), int(deep), mid) for mid in set(ids)),
             )
 
+    @staticmethod
+    def _embedding_filter(blocked_refs):
+        where = (
+            "m.scope=? AND NOT EXISTS (SELECT 1 FROM people p WHERE p.scope=m.scope AND p.ref=m.subject AND p.blocked=1)"
+            " AND (m.kind!='habit' OR (? AND EXISTS (SELECT 1 FROM people p WHERE p.scope=m.scope AND p.ref=m.subject AND p.habit_opt_in=1)))"
+            " AND NOT EXISTS (SELECT 1 FROM memory_people mp JOIN people b ON b.scope=mp.scope AND b.ref=mp.person_ref WHERE mp.memory_id=m.id AND b.blocked=1)"
+        )
+        if blocked_refs:
+            marks = ",".join("?" for _ in blocked_refs)
+            where += (" AND m.subject NOT IN (" + marks + ") AND NOT EXISTS (SELECT 1 FROM memory_people mp "
+                      "WHERE mp.memory_id=m.id AND mp.person_ref IN (" + marks + "))")
+        return where
+
     def unembedded(
         self, scope: str, fingerprint: str, limit: int = 16, blocked_refs=(),
         after=0, include_habits=True,
     ) -> list[dict]:
         with self.connection() as db:
-            marks = ",".join("?" for _ in blocked_refs)
-            excluded = (
-                " AND m.subject NOT IN (" + marks + ") AND NOT EXISTS (SELECT 1 FROM memory_people mp WHERE mp.memory_id=m.id AND mp.person_ref IN (" + marks + "))"
-                if blocked_refs
-                else ""
-            )
             rows = [
                 dict(r)
                 for r in db.execute(
-                    """SELECT m.* FROM memories m LEFT JOIN vectors v ON m.id=v.memory_id
-              WHERE m.scope=? AND NOT EXISTS (SELECT 1 FROM people p WHERE p.scope=m.scope AND p.ref=m.subject AND p.blocked=1)
-              AND (m.kind!='habit' OR (? AND EXISTS (SELECT 1 FROM people p WHERE p.scope=m.scope AND p.ref=m.subject AND p.habit_opt_in=1)))
-              AND NOT EXISTS (SELECT 1 FROM memory_people mp JOIN people b ON b.scope=mp.scope AND b.ref=mp.person_ref WHERE mp.memory_id=m.id AND b.blocked=1)
-              AND (v.memory_id IS NULL OR v.fingerprint<>? OR v.revision<>m.revision)"""
-                    + excluded
+                    "SELECT m.* FROM memories m LEFT JOIN vectors v ON m.id=v.memory_id WHERE "
+                    + self._embedding_filter(blocked_refs)
+                    + " AND (v.memory_id IS NULL OR v.fingerprint<>? OR v.revision<>m.revision)"
                     + " AND m.id>? ORDER BY m.id LIMIT ?",
-                    (scope, int(include_habits), fingerprint, *blocked_refs, *blocked_refs, after, limit),
+                    (scope, int(include_habits), *blocked_refs, *blocked_refs, fingerprint, after, limit),
                 )
             ]
             return self._attach_memory_people(db, rows)
+
+    def embedding_counts(self, scope, fingerprint, blocked_refs=(), include_habits=True):
+        with self.connection() as db:
+            total, indexed = db.execute(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN v.fingerprint=? AND v.revision=m.revision "
+                "THEN 1 ELSE 0 END),0) FROM memories m LEFT JOIN vectors v ON m.id=v.memory_id WHERE "
+                + self._embedding_filter(blocked_refs),
+                (fingerprint, scope, int(include_habits), *blocked_refs, *blocked_refs),
+            ).fetchone()
+        return {"indexed": indexed, "pending": total - indexed}
+
+    @staticmethod
+    def _save_vectors(db, fingerprint, records):
+        saved = 0
+        for mid, rev, vec in records:
+            if db.execute(
+                "SELECT id FROM memories WHERE id=? AND revision=?", (mid, rev)
+            ).fetchone():
+                db.execute(
+                    "INSERT INTO vectors VALUES(?,?,?,?) ON CONFLICT(memory_id) DO UPDATE SET fingerprint=excluded.fingerprint,revision=excluded.revision,vector=excluded.vector",
+                    (mid, fingerprint, rev, dump(vec)),
+                )
+                saved += 1
+        return saved
 
     def save_vectors(
         self, fingerprint: str, records: list[tuple[int, int, list[float]]]
     ):
         with self.connection() as db:
-            for mid, rev, vec in records:
-                if db.execute(
-                    "SELECT id FROM memories WHERE id=? AND revision=?", (mid, rev)
-                ).fetchone():
-                    db.execute(
-                        "INSERT INTO vectors VALUES(?,?,?,?) ON CONFLICT(memory_id) DO UPDATE SET fingerprint=excluded.fingerprint,revision=excluded.revision,vector=excluded.vector",
-                        (mid, fingerprint, rev, dump(vec)),
-                    )
+            return self._save_vectors(db, fingerprint, records)
+
+    def save_embedding_batch(self, key, previous_dimension, dimension, fingerprint, records):
+        """Commit a validated sub-batch and its current dimension in the same transaction."""
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+            current = json.loads(row["value"]) if row else 0
+            if current not in (previous_dimension, dimension):
+                return None
+            saved = self._save_vectors(db, fingerprint, records)
+            db.execute("INSERT OR REPLACE INTO kv VALUES(?,?)", (key, dump(dimension)))
+            return saved
 
     def commit_styles(self, scope: str, styles: list[dict], ids: list[int], auto=False):
         with self.connection() as db:
@@ -1536,7 +1579,7 @@ class Store:
         day=day_key(at)
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            count,last=db.execute("SELECT COUNT(*),MAX(started) FROM research_runs WHERE day=?", (day,)).fetchone()
+            count,last=db.execute("SELECT COUNT(*),MAX(started) FROM research_runs WHERE day=? AND state<>'migrated'", (day,)).fetchone()
             if count>=daily_limit or (last and at-last<interval_minutes*60):
                 return None
             run=db.execute("INSERT INTO research_runs(persona,day,started,state) VALUES(?,?,?,'running')", (persona,day,at))
@@ -1598,13 +1641,13 @@ class Store:
 
     def research_overview(self):
         with self.connection() as db:
-            return {"today_runs":db.execute("SELECT COUNT(*) FROM research_runs WHERE day=?", (day_key(),)).fetchone()[0],
+            return {"today_runs":db.execute("SELECT COUNT(*) FROM research_runs WHERE day=? AND state<>'migrated'", (day_key(),)).fetchone()[0],
                     "notes":db.execute("SELECT COUNT(*) FROM research_notes").fetchone()[0],
-                    "last":dictrow(db.execute("SELECT * FROM research_runs ORDER BY id DESC LIMIT 1").fetchone())}
+                    "last":dictrow(db.execute("SELECT * FROM research_runs WHERE state<>'migrated' ORDER BY id DESC LIMIT 1").fetchone())}
 
     def research_runs(self, limit=60):
         with self.connection() as db:
-            return [dict(x) for x in db.execute("SELECT * FROM research_runs ORDER BY id DESC LIMIT ?", (limit,))]
+            return [dict(x) for x in db.execute("SELECT * FROM research_runs WHERE state<>'migrated' ORDER BY id DESC LIMIT ?", (limit,))]
 
     def research_note_action(self, note_id, action):
         with self.connection() as db:

@@ -845,6 +845,9 @@ class DotaTests(unittest.IsolatedAsyncioTestCase):
         external = self.root / "external"
         external.mkdir()
         prior = fixture(today)
+        for group in prior["ranked_hero_data"]:
+            group["hero_data"][0]["enemy_win_rate"][2] = 5000
+            group["hero_data"][0]["ally_win_rate"][2] = 5000
         atomic_json(external / filename, prior)
         original_legacy = (external / filename).read_bytes()
         self.cfg["existing_snapshots_dir"] = str(external)

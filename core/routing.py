@@ -11,7 +11,8 @@ GROUPS = {
     "knowledge": {"search_knowledge"},
     "research": {"recall_research"},
     "dota_info": {"query_dota_hero", "query_dota_item", "search_dota_mechanics", "query_dota_patch"},
-    "dota_stats": {"get_hero_stats", "rank_hero_stats", "compare_hero_stats", "get_dota_matchups", "get_dota_trends"},
+    "dota_stats": {"get_hero_stats", "rank_hero_stats", "compare_hero_stats", "get_dota_matchups", "get_dota_trends",
+                   "query_dota_pro_matches", "query_dota_item_builds"},
     "web": {"search_web"},
 }
 GROUP_LABELS = {
@@ -26,6 +27,7 @@ GROUP_LABELS = {
 STATS = re.compile(r"胜率|登场率|出场率|选取率|禁用率|ban率|克制|counter|配合率|对阵|排名|win.?rate|picked", re.I)
 MATCHUP = re.compile(r"同队|队友|对抗|搭档|配合|搭配|对位|对比|比较|组合",re.I)
 DOTA = re.compile(r"刀塔|dota\s*2?|英雄|技能|装备|神杖|魔晶|大招|先天|天赋|补刀|bp\b|野区|肉山|段位|公开比赛|施法|驱散|无视减益免疫|中立物品", re.I)
+DOTA_SAMPLES = re.compile(r"出装|购买(?:时间|顺序)|职业(?:赛|比赛|联赛)|阵容|\bbp\b", re.I)
 TECH = re.compile(r"\b(?:sap|abap|sql|python|api|json|java|astrbot|http|idoc|wms|edi)\b|报错|接口|代码|文档|配置|脚本|字段|日志", re.I)
 REQUEST = re.compile(r"怎么样|能不能|可不可以|有没有|如何|怎么|为何|为什么|什么|多少|谁|哪些|哪个|哪位|是否|查|搜|看一下|看看|看下|解释|告诉|确认|核实|帮我|真的假的|对不对|[？?]", re.I)
 LOOKUP = re.compile(r"查(?:一下|下|找|询|证)?|搜(?:一下|下|索)?|核实|确认一下|数据|资料|百科|统计|具体数值|是多少|多少钱|最新消息|帮我看看|解释",re.I)
@@ -34,6 +36,43 @@ DEICTIC = re.compile(r"这个|那个|这种|上面|刚才|前面|之前|他说|�
 MEMORY = re.compile(r"记得|记忆|回忆|生日|约定|说过|上次|以前|我们.*认识|我的昵称|我.*叫|什么时候下班|几点到家", re.I)
 CURRENT = re.compile(r"今天|最新|最近|现在|目前|新闻|发布日期|价格|天气|实时|查证|核实|真假|真的假的|数据来源", re.I)
 RESEARCH = re.compile(r"见闻|读过|学了什么|看过.*(?:比赛|文章)|自己.*(?:查|研究|学习)|职业比赛|hltv|cs2", re.I)
+CAPABILITY_REQUEST = re.compile(
+    r"记住|别忘了|不要忘记|记一下|记下来|保存到|转达|帮我发|画(?:个|一张|图|一下)|绘图|"
+    r"(?:生成|编辑|修改|修复|改).*?(?:图片|图像|照片)|识字|识图|OCR|转录|语音|音频|"
+    r"视频|听一下|播报|朗读|知识库|\b(?:look up|remember|generate an? image|transcribe)\b",
+    re.I,
+)
+DEEP_REASONING = re.compile(
+    r"请证明|严谨证明|严格证明|逐步(?:推理|推导|演算|排查)|"
+    r"推导(?:这个|以下|公式|结论|过程)|(?:系统性|多角度)分析|"
+    r"\b(?:prove that|formal proof|derive step by step)\b",
+    re.I,
+)
+
+
+def reply_module(config, *, focus, text, scene, explicit, solicited=False, media=False):
+    """Choose a text provider once for a turn, conservatively keeping tool requests on the main route."""
+    models = config["models"]
+    if not (models.get("casual_provider") or models.get("deep_provider")):
+        return "reply"
+    if explicit or media or CAPABILITY_REQUEST.search(focus) or MEMORY.search(focus):
+        return "reply"
+    if LOOKUP.search(focus) or (focus != text and DEICTIC.search(text)):
+        return "reply"
+    if (solicited and models.get("deep_provider") and models.get("deep_daily_calls")
+            and DEEP_REASONING.search(text)):
+        # A complex request for current external facts still needs the tool-capable route.
+        if not (CURRENT.search(text) or STATS.search(focus) or RESEARCH.search(focus)):
+            return "reply_deep"
+    if models.get("casual_provider"):
+        ordinary = scene in ("casual", "banter", "support", "coordination") and not REQUEST.search(text)
+        simple_question = (
+            SOCIAL_QUESTION.search(text)
+            and not (TECH.search(focus) or DOTA.search(focus) or STATS.search(focus))
+        )
+        if ordinary or simple_question:
+            return "reply_casual"
+    return "reply"
 
 
 def focus_text(text, rows, target, batch_ids=()):
@@ -66,13 +105,14 @@ def alias_topic(text, aliases):
     return False
 
 
-def interests(focus, text, scene, direct, aliases):
+def interests(focus, text, scene, direct, aliases, *, dota_enabled=True):
     """Return selected groups and whether the request has an unresolved domain."""
     wanted = set()
     ask = bool(REQUEST.search(str(text))) or scene in ("game", "technical", "question", "correction")
     is_tech = bool(TECH.search(focus))
-    is_dota = bool(DOTA.search(focus) or alias_topic(focus, aliases))
-    is_stats = bool(STATS.search(focus) or is_dota and MATCHUP.search(focus))
+    is_dota = dota_enabled and bool(DOTA.search(focus) or alias_topic(focus, aliases))
+    is_stats = dota_enabled and bool(STATS.search(focus) or is_dota and
+                                    (MATCHUP.search(focus) or DOTA_SAMPLES.search(focus)))
     # "吃饭了吗？" is still a question, so don't silently ignore it, but
     # doesn't need an entire dictionary of statistics and business schemas.
     simple_social = bool(SOCIAL_QUESTION.search(text)) and not (is_tech or is_dota or is_stats or LOOKUP.search(text) or MEMORY.search(text))
@@ -105,7 +145,9 @@ class ToolPlan:
         self.specs = specs
         names = {x["name"] for x in specs}
         self.available = {g for g, tools in GROUPS.items() if tools & names}
-        wanted, ask, uncertain = interests(focus, text, scene, direct, aliases)
+        wanted, ask, uncertain = interests(
+            focus, text, scene, direct, aliases, dota_enabled=cfg["dota"]["enabled"]
+        )
         self.enabled = cfg["tools"]["contextual_tools"]
         can_expand = cfg["reply"]["max_tool_rounds"] >= 2 and cfg["reply"]["max_tool_calls"] >= 2
         if not cfg["reply"]["max_tool_rounds"] or not cfg["reply"]["max_tool_calls"]:
@@ -176,7 +218,8 @@ class ToolPlan:
 DOMAIN_RULES = {
     "dota_stats": (
         "Dota自身胜率/排名/比较使用 get_hero_stats/rank_hero_stats/compare_hero_stats。未指定段位省略分组参数（OpenDota 公开样本）；明确段位用 bracket，Valve周原始统计才用 rank_chunk/week。对抗/同队用 get_dota_matchups。",
-        "完整5v5样本按选取场次加权应接近50%，不是简单平均。不拿条件胜率冒充全体。缺样本不换口径冒充，stale=true 不称最新；日期为观察日，未核实的段位映射不猜。",
+        "完整5v5样本按选取场次加权应接近50%，不是简单平均。不拿条件胜率冒充全体。缺样本不换口径冒充，stale=true 不称最新；日期为观察日，未核实的段位映射不猜。"
+        "部分对阵快照的空值保持未知，不补旧数据或跨 rank 取数。职业阵容、BP 和购买频次只代表工具所标样本范围，缺失的分层或精确样本量不要推断。",
     ),
     "dota_info": (
         "Dota技能、装备与版本优先用结构化资料。按技能名或按键查询；特殊英雄槽位不确定时用名称。失败时可核对公开官方公告。",
