@@ -76,8 +76,10 @@ const bridge = {
         weekly: {state: "同步失败，保留旧数据", date: "2026-11-22", reason: "选取率总和异常",
           failure_kind: "invalid_structure", last_attempt: "2026-11-23T09:00:00+08:00",
           next_attempt: "2026-11-23T13:00:00+08:00", next_manual_attempt: "2026-11-23T09:01:00+08:00"},
-        matchups: {state: "今日快照已存在", date: "2026-11-23"},
+        matchups: {state: "今日已同步，部分配对缺失", date: "2026-11-23",
+          expected_pairs: 56007, valid_pairs: 56006, coverage_pct: 99.9982, last_complete_date: "2026-11-22"},
       }},
+      dota_samples: [{source:"opendota_pro",state:"有已验证样本"}],
       dota_knowledge: {state:"同步装备资料",patch:"7.42",hero:{published:true,done:127,total:127,
           latest_published:"7.42",versions:1},item:{published:false,done:160,total:525,metadata_only:3,
           latest_published:"7.41f",versions:1}},
@@ -86,6 +88,10 @@ const bridge = {
     if (p === "users/identities") return {items: copy(profiles().filter(u=>!q?.scope||u.memberships.some(m=>m.scope===q.scope)))};
     if (p === "users") return {items: copy(people.filter(u => (!q?.scope || u.scope === q.scope) && (!q?.q || [u.uid, u.name, ...u.historical_aliases].some(n => n.includes(q.q)))))};
     if (p === "memories") return {items: [copy(memory)]};
+    if (p === "personas/merge_options") return {personas: [
+      {id: "old", sessions: [{scope: "old-scope", platform: "qq_official", platform_id: "bot", kind: "group", location: "group-1"}]},
+      {id: "new", sessions: [{scope: "new-scope", platform: "qq_official", platform_id: "bot", kind: "group", location: "group-1"}]},
+    ]};
     if (p === "research") return {
       settings:{enabled:true,daily_topics:1,daily_tokens:10000},
       tokens:280, overview:{today_runs:1,notes:1},
@@ -98,6 +104,10 @@ const bridge = {
         {key:"steam_rss",label:"Steam 官方 RSS",last_source:"cs2_news",state:"ok",elapsed_ms:234,checked_at:1780000000},
         {key:"steam_api",label:"Steam 新闻 API",last_source:"cs2_news",state:"failed",cooling:true,
          retry_after:1780003600,checked_at:1780000000,reason:"TimeoutError（请求超时）",elapsed_ms:30000},
+        {key:"local_pro_sample",label:"本地职业比赛样本",last_source:"dota_pro_cache",state:"ok",
+         reason:"近 30 天 2 局有效职业样本",checked_at:1780000000},
+        {key:"cs2_esports",label:"CS2 结构化赛事",state:"unavailable",
+         reason:"暂无已验证的授权赛事接口。赛事动态可查 Steam 官方公告。"},
       ],
     };
     if (p === "relay") return {items:[{id:6,scope,alias:"刀塔群",status:"pending",created:1780000000}]};
@@ -112,6 +122,16 @@ const bridge = {
       {id:2,changes:{full_text:{before:"老大喜欢游戏",after:"小蓝喜欢游戏"}}}
     ]};
     if(p==="users/legacy_apply")return {ok:true,changed:value.selected.length};
+    if(p==="personas/merge_preview")return {
+      revision: "digest-1", sessions: [{scope: "old-scope", platform: "qq_official", platform_id: "bot", kind: "group", location: "group-1"}],
+      items: [
+        {id: "people:A", kind: "people", status: "copy", scope: "old-scope", title: "人物"},
+        {id: "memories:1", kind: "memories", status: "conflict", scope: "old-scope", title: "事实",
+          source: {title: "事实", full_text: "旧事实", gist: "旧摘要", trace: "旧印象"},
+          target: {title: "事实", full_text: "新事实", gist: "新摘要", trace: "新印象"}},
+      ], skipped: {memory_permission: 1},
+    };
+    if(p==="personas/merge_apply")return {ok:true, backup:"merge-fixture", counts:{people:1, memories:1}, conflicts_resolved:1};
     return {ok:true};
   },
 };
@@ -120,7 +140,7 @@ const source = fs.readFileSync(path.join(__dirname, "../views/dashboard/app.js")
 const beforeBoot = source.indexOf('$("nav").addEventListener("click"');
 assert.ok(beforeBoot > 0);
 vm.runInContext(source.slice(0, beforeBoot) + `
-showDialog = (title, fields, submit) => { globalThis.dialog = {title, fields, submit}; };
+showDialog = (title, fields, submit) => { $("dialog").open = true; globalThis.dialog = {title, fields, submit}; };
 globalThis.ui = {state, renderOverview, renderUsers, renderMemory, editUser, editGlobalUser, editMemory,
   drawConfig, currentConfig, saveConfig, renderResearch, renderRelay, editLegacyTitles, pageChange, openModule, modules};
 `, context);
@@ -154,6 +174,10 @@ async function main() {
   assert.ok(overview.includes("自动重试最早 2026-11-23 13:00:00+08:00"));
   assert.ok(overview.includes("再次手动同步最早 2026-11-23 09:01:00+08:00"));
   assert.ok(overview.includes("Valve · 对抗/同队"));
+  assert.ok(overview.includes("今日已同步，部分配对缺失"));
+  assert.ok(overview.includes("99.9982%"));
+  assert.ok(overview.includes("最近完整快照 2026-11-22"));
+  assert.ok(overview.includes("OpenDota 职业样本"));
   assert.ok(overview.includes("同步 Dota 统计"));
   assert.ok(overview.includes("Dota 版本资料"));
   assert.ok(overview.includes("127 / 127"));
@@ -241,6 +265,32 @@ async function main() {
   assert.equal(calls.at(-1)[0],"users/legacy_apply");
   assert.deepEqual(calls.at(-1)[1].selected,[1]);
   assert.equal(calls.at(-1)[1].revision,"preview-r1");
+  // Merge must use a confirmed preview, preserve target conflicts by default,
+  // and submit only the chosen scope, records and edited fields.
+  await ui.renderMemory(ui.state.epoch);
+  await findNode(ids.get("page"), n => n.tag === "button" && n.textContent === "人格数据管理").fire("click");
+  assert.equal(context.dialog.title, "人格数据管理");
+  await assert.rejects(context.dialog.submit(), /先预览/);
+  field("来源人格").fire("change", "old");
+  field("目标人格").fire("change", "new");
+  field("来源会话").fire("change", "old-scope");
+  const mergePreview = context.dialog.fields.find(n => n.tag === "button" && n.textContent === "只读预览");
+  await mergePreview.fire("click");
+  assert.equal(calls.at(-1)[0], "personas/merge_preview");
+  const previewRows = context.dialog.fields.at(-1);
+  assert.ok(previewRows.textContent.includes("新事实"));
+  const conflict = findNode(previewRows, n => n.tag === "select" && n.value === "target");
+  assert.ok(conflict);
+  conflict.fire("change", "manual");
+  const note = findNode(previewRows, n => n.tag === "textarea" && n.textContent === "新事实");
+  note.fire("input", "合并后完整事实");
+  await context.dialog.submit();
+  assert.equal(calls.at(-1)[0], "personas/merge_apply");
+  assert.equal(calls.at(-1)[1].confirm, true);
+  assert.equal(calls.at(-1)[1].revision, "digest-1");
+  assert.equal(calls.at(-1)[1].scope, "old-scope");
+  assert.equal(calls.at(-1)[1].actions.find(a => a.id === "memories:1").values.full_text, "合并后完整事实");
+  assert.ok(ids.get("notice").textContent.includes("merge-fixture"));
   // Category filtering and the original keyword filter intersect without changing JSON.
   ui.state.config={schema:[
     {key:"memory",label:"分层记忆",fields:[
@@ -302,6 +352,8 @@ async function main() {
   assert.ok(p.textContent.includes("官方测试事实")&&p.textContent.includes("角色观点（非事实）"));
   assert.ok(findNode(p,n=>n.tag==="a"&&n.href==="https://store.steampowered.com/news/app/570/view/123"));
   assert.ok(p.textContent.includes("Steam 官方 RSS")&&p.textContent.includes("TimeoutError（请求超时）"));
+  assert.ok(p.textContent.includes("本地职业比赛样本")&&p.textContent.includes("2 局有效职业样本"));
+  assert.ok(p.textContent.includes("CS2 结构化赛事")&&p.textContent.includes("未接入"));
   await findNode(p,n=>n.tag==="button"&&n.textContent==="检测数据源").fire("click");
   assert.equal(calls.at(-1)[0],"action");
   assert.equal(calls.at(-1)[1].name,"research_probe");
@@ -360,7 +412,7 @@ async function main() {
   assert.equal(categories.children.length,7);
   categories.fire("change","conversation");
   assert.deepEqual(allNodes(p,n=>n.className==="config-section").map(n=>n.id),
-    ["config-section-decision","config-section-reply","config-section-interrupt"]);
+    ["config-section-decision","config-section-reply","config-section-interrupt","config-section-sessions"]);
   const filter=findNode(p,n=>n.tag==="input"&&n.placeholder==="搜索名称、字段、描述…");
   filter.fire("input","reply.split_chars");
   assert.equal(allNodes(p,n=>n.className==="key").length,1);
@@ -371,6 +423,22 @@ async function main() {
   assert.equal(saved.revision,"all-r1");
   const edited=copy(real[1]); edited.reply.split_chars=420;
   assert.deepEqual(saved.config,edited);
+  ui.state.config.presets = {questions: {decision: {ordinary_check_probability: 0, dynamic_enabled: false}}};
+  ui.drawConfig();
+  const presetsButton = findNode(ids.get("page"), n => n.tag==="button" && n.textContent==="场景预设与会话覆盖");
+  await presetsButton.fire("click");
+  const scenarioScope = field("应用范围");
+  const selectedScope = ui.state.sessions[0].scope;
+  scenarioScope.fire("change", selectedScope);
+  field("预设").fire("change", "questions");
+  assert.ok(context.dialog.fields.at(-1).textContent.includes("当前来源"));
+  await context.dialog.submit();
+  assert.equal(ui.state.draft.sessions.overrides[selectedScope].decision.ordinary_check_probability, 0);
+  assert.equal(ui.state.draft.decision.ordinary_check_probability, edited.decision.ordinary_check_probability);
+  assert.deepEqual(copy(ui.state.draft.access), edited.access);
+  await ui.saveConfig();
+  assert.equal(calls.at(-1)[1].config.sessions.overrides[selectedScope].decision.dynamic_enabled, false);
+
   for(const [tab,caption,category,section] of [
     ["research","前往配置","memory","research"],["relay","前往转达配置","access","relay"]]) {
     await ui.pageChange(tab);

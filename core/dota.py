@@ -14,8 +14,9 @@ from .dota_details import (PATCH, ATTRIBUTES, NUM_FIELDS, ability_type, filter_m
                            hero_result, named_abilities, render_numbers, specials_of,
                            talents_of, with_english_names)
 from .dota_knowledge import (KnowledgeStore, api_rows, latest_patch, patch_key,
-                             validate_detail, validate_roster)
-from .research_sources import HTTPFailure
+                             patch_history, validate_detail, validate_roster)
+from .dota_matches import DotaMatches, PATCHES
+from .research_sources import HTTPFailure, PRO_LIST
 from .util import (
     atomic_json,
     clean,
@@ -222,7 +223,11 @@ class StatsSnapshot:
             raise InvalidStatsFormat("对抗分组缺失或不是列表")
         self.index = hero_index(heroes, aliases, minimum=100 if strict else 2)
         ids = sorted(self.index.by_id)
+        roster = set(ids)
         self.ranks = {}
+        self.coverage = {}
+        self.hero_coverage = {}
+        self.unknown_pairs = {}
         for group in groups:
             if not isinstance(group, dict):
                 raise InvalidStatsFormat("对抗分组记录无效")
@@ -238,18 +243,20 @@ class StatsSnapshot:
                 if not isinstance(r, dict):
                     raise InvalidStatsFormat(f"对抗 rank {rank} 英雄记录无效")
                 hid = require_int(r.get("hero_id"), 1, 2000)
-                if hid not in ids or hid in indexed:
+                if hid not in roster or hid in indexed:
                     raise InvalidStatsFormat(f"对抗 rank {rank} 英雄 ID {hid} 不在名单中或重复")
                 first = require_int(r.get("first_other_hero_id"), 1, 2001)
-                enemy = r.get("enemy_win_rate", [])
-                ally = r.get("ally_win_rate", [])
                 width = ids[-1] - hid
+                empty = None if width else []
+                enemy = r.get("enemy_win_rate", empty)
+                ally = r.get("ally_win_rate", empty)
                 if (
                     first != hid + 1
                     or not isinstance(enemy, list)
                     or not isinstance(ally, list)
-                    or len(enemy) != width
-                    or len(ally) != width
+                    or len(enemy) != len(ally)
+                    or len(enemy) > width
+                    or (len(enemy) < width and (not enemy or hid + len(enemy) not in roster))
                 ):
                     enemy_len = len(enemy) if isinstance(enemy, list) else "非列表"
                     ally_len = len(ally) if isinstance(ally, list) else "非列表"
@@ -259,25 +266,63 @@ class StatsSnapshot:
                     )
                 if any(type(x) is not int or not 0 <= x <= 10000 for x in enemy + ally):
                     raise InvalidStatsFormat(f"对阵 rank {rank} 英雄 {hid} 数组值无效")
+                if any(a or b for i, (a, b) in enumerate(zip(enemy, ally), first) if i not in roster):
+                    raise InvalidStatsFormat(f"对阵 rank {rank} 英雄 {hid} 的非英雄 ID 槽存在非零值")
                 indexed[hid] = {
                     "first": first,
                     "enemy": enemy,
                     "ally": ally,
                 }
-            pairs = len(ids) * (len(ids) - 1) // 2
-            valid = sum(
-                1
-                for pos, a in enumerate(ids)
-                for b in ids[pos + 1 :]
-                if indexed[a]["enemy"][b - indexed[a]["first"]] > 0
-                and indexed[a]["ally"][b - indexed[a]["first"]] > 0
-            )
-            if strict and valid < pairs * 0.95:
-                raise InvalidStatsFormat(f"对抗 rank {rank} 有效配对不足 95%（{valid}/{pairs}）")
             self.ranks[rank] = indexed
+            self._measure_coverage(rank, ids, strict)
         if strict and set(self.ranks) != set(range(7)):
             missing = ", ".join(str(i) for i in range(7) if i not in self.ranks)
             raise InvalidStatsFormat(f"对抗分组不完整（缺少 rank {missing}）")
+        self.partial = any(group["missing_pairs"] for group in self.coverage.values())
+
+    def _measure_coverage(self, rank, ids, strict):
+        length = len(ids) - 1
+        heroes = {
+            hid: dict(expected_pairs=length, valid_pairs=0, valid_enemy_pairs=0, valid_ally_pairs=0)
+            for hid in ids
+        }
+        totals = dict(expected_pairs=len(ids) * length // 2, valid_pairs=0,
+                      valid_enemy_pairs=0, valid_ally_pairs=0, tail_missing_pairs=0,
+                      zero_unknown_pairs=0)
+        unknown = []
+        for pos, a in enumerate(ids):
+            row = self.ranks[rank][a]
+            for b in ids[pos + 1:]:
+                i = b - row["first"]
+                omitted = i >= len(row["enemy"])
+                enemy, ally = (False, False) if omitted else (bool(row["enemy"][i]), bool(row["ally"][i]))
+                if not (enemy and ally):
+                    totals["tail_missing_pairs" if omitted else "zero_unknown_pairs"] += 1
+                    unknown.append({"first_id": a, "second_id": b, "enemy_unknown": not enemy,
+                                    "ally_unknown": not ally, "reason": "omitted_tail" if omitted else "zero"})
+                for counts in (totals, heroes[a], heroes[b]):
+                    counts["valid_pairs"] += enemy and ally
+                    counts["valid_enemy_pairs"] += enemy
+                    counts["valid_ally_pairs"] += ally
+        for counts in (totals, *heroes.values()):
+            possible, valid = counts["expected_pairs"], counts["valid_pairs"]
+            counts["missing_pairs"] = possible - valid
+            counts["coverage_pct"] = round(100 * valid / possible, 4)
+        for hid, counts in heroes.items():
+            if strict and counts["valid_pairs"] * 100 < length * 95:
+                raise InvalidStatsFormat(f"对抗 rank {rank} 英雄 {hid} 有效配对不足 95%"
+                                         f"（{counts['valid_pairs']}/{length}）")
+        if strict and totals["valid_pairs"] * 100 < totals["expected_pairs"] * 95:
+            raise InvalidStatsFormat(f"对抗 rank {rank} 有效配对不足 95%")
+        self.coverage[rank] = totals
+        self.hero_coverage[rank] = heroes
+        self.unknown_pairs[rank] = unknown
+
+    def integrity(self):
+        possible = sum(group["expected_pairs"] for group in self.coverage.values())
+        valid = sum(group["valid_pairs"] for group in self.coverage.values())
+        return dict(partial=self.partial, expected_pairs=possible, valid_pairs=valid,
+                    missing_pairs=possible - valid, coverage_pct=round(100 * valid / possible, 4) if possible else 0)
 
     def pair(self, a, b, rank):
         if a == b:
@@ -287,6 +332,8 @@ class StatsSnapshot:
         high = max(a, b)
         r = rows[low]
         i = high - r["first"]
+        if i >= len(r["enemy"]):
+            return None, None
         enemy = r["enemy"][i]
         ally = r["ally"][i]
         return (
@@ -299,6 +346,8 @@ class StatsSnapshot:
             **snapshot_header(self.raw, self.index, STATS_URL),
             "scope": "Valve 对抗/同队统计（非总体胜率）",
             "rank": rank,
+            "partial": self.partial,
+            "rank_coverage": self.coverage[rank],
             "rank_label": labels.get(str(rank), f"rank={rank}（段位未核实）"),
             "note": "仅对抗/同队条件胜率；准确统计窗口、样本量及 rank 映射未核实。原始 win_rate 不作英雄自身胜率；统计关系不是因果克制。",
         }
@@ -531,11 +580,14 @@ def fit_stats_payload(data, maximum):
     if len(dump(out)) <= maximum:
         return out
     out["truncated"] = True
-    for key in ("series", "ranking", "rows", "candidates"):
+    for key in ("series", "ranking", "rows", "hero_rows", "candidates"):
         rows = out.get(key)
         if isinstance(rows, list):
             while len(rows) > 1 and len(dump(out)) > maximum:
                 rows.pop()
+            if key == "rows" and "purchase_count" in out and "offset" in out:
+                next_offset = out["offset"] + len(rows)
+                out["next_offset"] = next_offset if next_offset < out["purchase_count"] else None
     if len(dump(out)) > maximum and "matchup" in out:
         out["matchup"] = {"error": "字符预算不足，请单独查询对抗统计"}
     if len(dump(out)) <= maximum:
@@ -553,6 +605,8 @@ class DotaService:
         self.config = config
         self.log = log
         self.snap_dir = root / "snapshots"
+        self.partial_matchup_dir = root / "partial_matchups"
+        self.last_complete_matchup_date = None
         self.source_dirs = {
             "matchups": self.snap_dir,
             "public": root / "public_stats",
@@ -562,6 +616,7 @@ class DotaService:
         self.catalog_path = root / "catalog.json"
         for directory in self.source_dirs.values():
             directory.mkdir(parents=True, exist_ok=True)
+        self.partial_matchup_dir.mkdir(parents=True, exist_ok=True)
         self.detail_dir.mkdir(parents=True, exist_ok=True)
         self.aliases = read_json(ALIAS_FILE)
         self.stats_lock = asyncio.Lock()
@@ -578,6 +633,7 @@ class DotaService:
         self.sync_state_path = root / "stats_sync_state.json"
         self.sync_state = self._load_sync_state()
         self.knowledge = KnowledgeStore(self, root / "knowledge", log)
+        self.matches = DotaMatches(root, lambda url, cfg: self._fetch(url, cfg), log)
 
     def _load_sync_state(self):
         try:
@@ -625,7 +681,8 @@ class DotaService:
                 pending.append(source)
             elif manual:
                 last_manual = health.get("last_manual")
-                if ((not verified_today or health.get("failure_kind"))
+                if ((not verified_today or health.get("failure_kind") or
+                     isinstance(snapshot, StatsSnapshot) and snapshot.partial)
                     and (last_manual is None or at >= last_manual + STATS_MANUAL_INTERVAL)):
                     pending.append(source)
             elif not verified_today and at >= health.get("retry_after", 0):
@@ -637,8 +694,10 @@ class DotaService:
             return False
         return bool(self._pending_sources(await self._existing(cfg), now()))
 
-    def _paths(self, cfg, day=None, source="matchups"):
+    def _paths(self, cfg, day=None, source="matchups", complete=False):
         roots = [self.source_dirs[source]]
+        if source == "matchups" and not complete:
+            roots.append(self.partial_matchup_dir)
         if source == "matchups" and cfg["existing_snapshots_dir"]:
             roots.append(external_path(cfg["existing_snapshots_dir"]))
         paths = []
@@ -661,11 +720,19 @@ class DotaService:
             except OSError:
                 continue
         return [
-            p for _, __, p in sorted(paths, key=lambda x: (x[0], x[1]), reverse=True)
+            p for _, __, p in sorted(
+                paths, key=lambda x: (x[0], x[2].parent != self.partial_matchup_dir, x[1]), reverse=True
+            )
         ]
 
-    def _load_stats(self, cfg, day=None, source="matchups"):
-        for path in self._paths(cfg, day, source)[: (8 if day is None else 4)]:
+    def _load_stats(self, cfg, day=None, source="matchups", complete=False):
+        candidates = self._paths(cfg, day, source, complete)
+        if not complete:
+            candidates = candidates[: (8 if day is None else 4)]
+        best = None
+        for path in candidates:
+            if best and path.stem != best.day.replace("-", ""):
+                break
             try:
                 signature = (
                     source,
@@ -683,10 +750,13 @@ class DotaService:
                     self.cached_stats[signature] = obj
                     while len(self.cached_stats) > 15:
                         self.cached_stats.pop(next(iter(self.cached_stats)))
-                return obj
+                if source != "matchups" or not obj.partial:
+                    return obj
+                if not complete and (not best or obj.integrity()["valid_pairs"] > best.integrity()["valid_pairs"]):
+                    best = obj
             except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError):
                 continue
-        return None
+        return best
 
     def _validate_snapshot(self, source, payload):
         if source == "matchups":
@@ -698,10 +768,15 @@ class DotaService:
             return await asyncio.to_thread(self._load_stats, cfg, day, source)
 
     async def _existing(self, cfg):
+        def load():
+            snapshots = {source: self._load_stats(cfg, source=source) for source in SOURCES}
+            matchup = snapshots["matchups"]
+            complete = self._load_stats(cfg, complete=True) if not matchup or matchup.partial else matchup
+            self.last_complete_matchup_date = complete.day if complete else None
+            return snapshots
+
         async with self.stats_lock:
-            return await asyncio.to_thread(
-                lambda: {source: self._load_stats(cfg, source=source) for source in SOURCES}
-            )
+            return await asyncio.to_thread(load)
 
     def _source_state(self, source, snapshot, state=None):
         health = self.sync_state.get(source, {})
@@ -718,6 +793,13 @@ class DotaService:
         }
         if snapshot:
             info.update(heroes=len(snapshot.index.by_id), stale=snapshot.day != day_key())
+            if isinstance(snapshot, StatsSnapshot):
+                info.update(**snapshot.integrity(), last_complete_date=self.last_complete_matchup_date)
+                if snapshot.partial and state != "同步中":
+                    if snapshot.day == day_key():
+                        info["state"] = "今日已同步，部分配对缺失"
+                    elif not failure_kind:
+                        info["state"] = "已读取快照，部分配对缺失"
             if isinstance(snapshot, WinRateSnapshot):
                 info["partitions"] = len(snapshot.groups)
                 if snapshot.source == "public":
@@ -740,6 +822,8 @@ class DotaService:
         if any(s.get("failure_kind") for s in states.values()):
             available = any(s["date"] and not s.get("failure_kind") for s in states.values())
             return "部分同步成功" if updated or available else "同步失败"
+        if any(s.get("partial") for s in states.values()):
+            return "部分配对缺失"
         if updated:
             return "同步成功"
         if all(s["date"] == day_key() for s in states.values()):
@@ -774,7 +858,10 @@ class DotaService:
                     if len(data) > 32 * 1024 * 1024:
                         raise InvalidStatsFormat("接口数据过大")
                 result = json.loads(data)
-                if not isinstance(result, list if url == PUBLIC_STATS_URL else dict):
+                list_endpoint = url in (PUBLIC_STATS_URL, PRO_LIST, PATCHES) or bool(re.fullmatch(
+                    r"https://api\.opendota\.com/api/heroes/[1-9]\d{0,3}/matches", url
+                ))
+                if not isinstance(result, list if list_endpoint else dict):
                     raise InvalidStatsFormat("统计接口 JSON 根节点类型错误")
                 return result
 
@@ -843,7 +930,12 @@ class DotaService:
             }
             # No need to persist unrelated hero attributes or duplicate trend arrays.
             payload["hero_stats"] = [{k: v for k, v in r.items() if k in keys} for r in data]
-        return self._validate_snapshot(source, payload)
+        snapshot = self._validate_snapshot(source, payload)
+        if isinstance(snapshot, StatsSnapshot):
+            payload["matchup_quality"] = {
+                **snapshot.integrity(), "ranks": snapshot.coverage, "unknown_pairs": snapshot.unknown_pairs,
+            }
+        return snapshot
 
     @staticmethod
     def _sync_failure(error, stage):
@@ -933,8 +1025,10 @@ class DotaService:
                         stage = "storage"
                         # Only a validated payload replaces this source's snapshot.
                         async with self.stats_lock:
+                            partial = isinstance(validated, StatsSnapshot) and validated.partial
+                            directory = self.partial_matchup_dir if partial else self.source_dirs[source]
                             await write_stats_json(
-                                self.source_dirs[source] / (validated.day.replace("-", "") + ".json"),
+                                directory / (validated.day.replace("-", "") + ".json"),
                                 validated.raw,
                             )
                             for key in list(self.cached_stats):
@@ -954,9 +1048,16 @@ class DotaService:
                         for key in ("failure_kind", "reason", "retry_after", "failures"):
                             health.pop(key, None)
                         health["success_date"] = validated.day
-                        states[source] = self._source_state(source, validated, "同步成功")
+                        previous = existing[source]
+                        if source == "matchups" and not partial:
+                            self.last_complete_matchup_date = validated.day
+                        if partial and previous and previous.day == validated.day and not previous.partial:
+                            states[source] = self._source_state(source, previous, "今日快照已存在")
+                        else:
+                            states[source] = self._source_state(source, validated, "同步成功")
                         updated.append(source)
-                        self.log.emit("DOTA", "sync_ok", task=source, heroes=len(validated.index.by_id))
+                        self.log.emit("DOTA", "sync_partial" if partial else "sync_ok",
+                                      task=source, heroes=len(validated.index.by_id))
                     remaining.discard(source)
             except asyncio.CancelledError:
                 for source in remaining:
@@ -982,8 +1083,14 @@ class DotaService:
         ).strftime("%Y%m%d")
         # A successful refresh of another source must not delete the only
         # usable fallback snapshot of a source that is still failing.
-        for source in sources:
-            directory = self.source_dirs[source]
+        directories = [self.source_dirs[source] for source in sources if source != "matchups"]
+        if "matchups" in sources:
+            directories.append(self.partial_matchup_dir)
+            if not self.last_status["sources"]["matchups"].get("partial"):
+                # A same-day full snapshot may have been retained from before
+                # the refresh. Prune older complete data only with full data available.
+                directories.append(self.snap_dir)
+        for directory in directories:
             for p in directory.iterdir():
                 if (
                     SNAP_RE.fullmatch(p.name)
@@ -1187,14 +1294,46 @@ class DotaService:
                 "second": s.index.label(b["id"]),
                 "first_vs_second_pct": enemy,
                 "same_team_pct": ally,
+                "pair_status": "partial" if enemy is None or ally is None else "complete",
+                **({"data_note": "本快照、该 rank 的缺失指标无数据。可明确指定旧抓取日另查。"}
+                   if enemy is None or ally is None else {}),
             }
         return {
             **meta,
             "hero": s.index.label(aid),
             "mode": mode,
             "rows": s.related(aid, rank, mode, limit),
+            "hero_coverage": s.hero_coverage[rank][aid],
+            "available_pairs": s.hero_coverage[rank][aid][
+                "valid_ally_pairs" if mode == "allies" else "valid_enemy_pairs"
+            ],
             "metric_explanation": "counters 按对阵胜率由低到高；favored 由高到低；allies 按同队胜率由高到低。",
         }
+
+    async def match_hero(self, cfg, name):
+        current = await self.latest(cfg, source="public") or await self.latest(cfg)
+        if current:
+            return current.index.resolve(name)
+        catalog = await self.catalog(cfg)
+        if not catalog or not catalog.get("heroes"):
+            return None, {"error": "没有已校验的英雄名单，无法核对英雄"}
+        return AliasIndex(catalog["heroes"], self.aliases["heroes"]).resolve(name)
+
+    async def pro_matches(self, cfg, *, hero="", **options):
+        if hero:
+            row, error = await self.match_hero(cfg, hero)
+            if error:
+                return error
+            options["hero_id"] = row["id"]
+        return await self.matches.pro(cfg, **options)
+
+    async def item_builds(self, cfg, hero, **options):
+        row, error = await self.match_hero(cfg, hero)
+        if error:
+            return error
+        return await self.matches.item_builds(cfg, {
+            "id": row["id"], "name": row["display"], "english": row["english"],
+        }, **options)
 
     async def catalog(self, cfg):
         async with self.catalog_lock:
@@ -1659,10 +1798,17 @@ class DotaService:
             if not patch or now()-at>3600:
                 return {"error":"暂时无法核实最新补丁号，请指定版本。"}
         patch=str(patch).lower()
-        if not PATCH.fullmatch(patch) or from_patch and not PATCH.fullmatch(str(from_patch).lower()):
+        if not PATCH.fullmatch(patch) or (from_patch and from_patch != "previous" and
+                                        not PATCH.fullmatch(str(from_patch).lower())):
             return {"error":"补丁格式应如 7.42 或 7.42a"}
         kind="hero" if hero else "item"
         name=hero or item
+        if from_patch == "previous" and name:
+            try:
+                official = patch_history(await self._fetch(BASE+"patchnoteslist?language=english", cfg))
+                from_patch = official[official.index(patch) + 1]
+            except (ValueError, IndexError, aiohttp.ClientError, OSError, asyncio.TimeoutError):
+                return {"patch": patch, "error": "Valve 版本目录无法核实该补丁的前一版，可指定精确补丁。"}
         if from_patch:
             if not name:
                 return {"error":"跨版数值对比请指定一个英雄或物品"}

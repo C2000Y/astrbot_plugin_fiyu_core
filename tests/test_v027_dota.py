@@ -31,6 +31,9 @@ class DotaSyncTests(unittest.IsolatedAsyncioTestCase):
         self.log = DailyLog(self.root / "logs", self.config, LOGGER)
         self.cfg = defaults()["dota"]
         self.matchups = fixture(day_key())
+        for group in self.matchups["ranked_hero_data"]:
+            group["hero_data"][0]["enemy_win_rate"][2] = 5000
+            group["hero_data"][0]["ally_win_rate"][2] = 5000
         roster = self.matchups["heroes"]
         self.responses = {
             HERO_LIST_URL: {"result": {"data": {"heroes": roster}}},

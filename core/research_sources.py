@@ -22,14 +22,23 @@ ENDPOINTS = {
     "steam_api": "Steam 新闻 API",
     "opendota_pro": "OpenDota 职业比赛",
     "local_meta": "本地胜率快照",
+    "local_pro_sample": "本地职业比赛样本",
 }
 SOURCE_NAMES = {
     "dota_news": "Dota 2 官方公告与版本动态",
     "cs2_news": "CS2 官方公告与版本/赛事动态",
     "dota_pro": "OpenDota 近期记录的职业比赛，最多两场阵容样本",
     "dota_meta": "现有已校验 OpenDota 英雄公开比赛胜率快照",
+    "dota_pro_cache": "最近一次已校验的 OpenDota 职业比赛查询样本，仅读本地缓存",
 }
 NEWS_SOURCES = {"dota_news": 570, "cs2_news": 730}
+DOTA_SOURCES = frozenset({"dota_news", "dota_pro", "dota_meta", "dota_pro_cache"})
+LOCAL_SOURCES = frozenset({"dota_meta", "dota_pro_cache"})
+SOURCE_FOCUS = {
+    "dota_meta": "英雄名称",
+    "dota_pro": "公开战队名称",
+    "dota_pro_cache": "公开战队名称",
+}
 HEALTH_KEY = "research_source_health_v1"
 GID = re.compile(r"[1-9]\d{0,22}")
 
