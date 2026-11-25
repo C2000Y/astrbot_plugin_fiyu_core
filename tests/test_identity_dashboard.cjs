@@ -73,7 +73,9 @@ const bridge = {
       mode: "active", today: "2026-11-23", budget: 0, totals: {}, usage: {}, actions: {},
       dota: {state: "部分同步成功", sources: {
         public: {state: "同步成功", date: "2026-11-23", weighted_win_rate_pct: 50.00001},
-        weekly: {state: "同步失败，保留旧数据", date: "2026-11-22", reason: "选取率总和异常"},
+        weekly: {state: "同步失败，保留旧数据", date: "2026-11-22", reason: "选取率总和异常",
+          failure_kind: "invalid_structure", last_attempt: "2026-11-23T09:00:00+08:00",
+          next_attempt: "2026-11-23T13:00:00+08:00", next_manual_attempt: "2026-11-23T09:01:00+08:00"},
         matchups: {state: "今日快照已存在", date: "2026-11-23"},
       }},
       dota_knowledge: {state:"同步装备资料",patch:"7.42",hero:{published:true,done:127,total:127,
@@ -148,6 +150,9 @@ async function main() {
   assert.ok(overview.includes("Valve · 分组周统计"));
   assert.ok(overview.includes("2026-11-22（非今日）"));
   assert.ok(overview.includes("选取率总和异常"));
+  assert.ok(overview.includes("最近尝试 2026-11-23 09:00:00+08:00"));
+  assert.ok(overview.includes("自动重试最早 2026-11-23 13:00:00+08:00"));
+  assert.ok(overview.includes("再次手动同步最早 2026-11-23 09:01:00+08:00"));
   assert.ok(overview.includes("Valve · 对抗/同队"));
   assert.ok(overview.includes("同步 Dota 统计"));
   assert.ok(overview.includes("Dota 版本资料"));

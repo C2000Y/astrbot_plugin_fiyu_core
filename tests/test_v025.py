@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from astrbot_plugin_fiyu_core.core.config import ConfigError, ConfigStore, defaults, validate
-from astrbot_plugin_fiyu_core.core.telemetry import BalanceCheckError
+from astrbot_plugin_fiyu_core.core.telemetry import BalanceCheckError, ModelFailure
 from astrbot_plugin_fiyu_core.core.util import limit_reply, plain_reply_text, split_reply
 
 
@@ -117,11 +117,42 @@ class AdapterBoundaryTests(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls):
         imports = ("astrbot.api.event", "astrbot.api.message_components", "astrbot.core.agent.message",
                    "astrbot.core.agent.tool", "astrbot.core.provider.entities")
+        sdk = {name: Mock() for name in imports}
+        connection_error = type("APIConnectionError", (RuntimeError,), {})
+        sdk["astrbot.core.exceptions"] = SimpleNamespace(
+            EmptyModelOutputError=type("EmptyModelOutputError", (RuntimeError,), {}),
+            ProviderNotFoundError=type("ProviderNotFoundError", (RuntimeError,), {}),
+        )
+        sdk["openai"] = SimpleNamespace(
+            APIConnectionError=connection_error,
+            APITimeoutError=type("APITimeoutError", (connection_error,), {}),
+        )
         path = Path(__file__).resolve().parents[1] / "host.py"
         spec = importlib.util.spec_from_file_location("astrbot_plugin_fiyu_core.offline_host", path)
         cls.module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {name: Mock() for name in imports}):
+        with patch.dict(sys.modules, sdk):
             spec.loader.exec_module(cls.module)
+
+    async def test_sdk_failure_types_remain_distinguishable(self):
+        context = SimpleNamespace(llm_generate=AsyncMock(), get_current_chat_provider_id=AsyncMock())
+        host = self.module.AstrHost(context)
+        context.get_current_chat_provider_id.side_effect = self.module.ProviderNotFoundError("private")
+        with self.assertRaises(ModelFailure) as missing:
+            await host.chat_provider("fixture-session")
+        self.assertEqual(missing.exception.category, "provider_unavailable")
+        for exception_type, expected in (
+            (self.module.ProviderNotFoundError, "provider_unavailable"),
+            (self.module.APIConnectionError, "provider_unavailable"),
+            (self.module.APITimeoutError, "timeout"),
+            (self.module.EmptyModelOutputError, "invalid_response"),
+        ):
+            with self.subTest(exception_type=exception_type):
+                context.llm_generate.side_effect = exception_type("private_failure_details")
+                with self.assertRaises(ModelFailure) as error:
+                    await host.generate("fixture-provider", "prompt", "system")
+                self.assertEqual(error.exception.category, expected)
+                self.assertNotIn("private_failure_details", str(error.exception))
+                self.assertEqual(context.llm_generate.await_args.kwargs["request_max_retries"], 1)
 
     async def test_each_bubble_submits_its_own_plain_message_chain(self):
         class Chain:

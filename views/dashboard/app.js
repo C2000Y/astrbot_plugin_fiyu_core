@@ -43,6 +43,25 @@ const i18n = {
   memory: "记忆学习",
   style: "语言学习",
   vision: "视觉理解",
+  vision_observe: "主动视觉理解",
+  economy: "经济",
+  balanced: "平衡",
+  full: "完整",
+  local_skip: "本地跳过",
+  model_silent: "模型选择不接话",
+  model_reply: "模型选择回复",
+  direct: "直接触发",
+  decision_budget: "决策预算不足",
+  decision_error: "决策调用异常",
+  model_chose_silence: "模型选择不接话",
+  below_confidence_threshold: "置信度不足",
+  provider_unavailable: "模型服务不可用",
+  timeout: "响应超时",
+  rate_limit: "供应商限频",
+  quota_exhausted: "供应商额度不足",
+  content_rejected: "供应商内容审核拒绝",
+  invalid_response: "响应格式无效",
+  unsupported_modality: "模型不支持该媒体类型",
   embedding: "向量检索",
   research: "自主学习",
   submitted: "已提交",
@@ -490,6 +509,12 @@ async function renderOverview(token) {
         data?.date ? " " + data.date + (data.date !== s.today ? "（非今日）" : "") : "",
         data?.weighted_win_rate_pct !== undefined ? ` · 加权 ${Number(data.weighted_win_rate_pct).toFixed(2)}%` : "",
         data?.reason ? h("div", {}, data.reason) : null,
+        data?.success_date && !data.date ? h("div", {}, "最近成功日期 " + data.success_date) : null,
+        data?.last_attempt ? h("div", {}, "最近尝试 " + data.last_attempt.replace("T", " ")) : null,
+        data?.next_attempt && data.state !== "同步中"
+          ? h("div", {}, "自动重试最早 " + data.next_attempt.replace("T", " ")) : null,
+        data?.failure_kind && data.next_manual_attempt
+          ? h("div", {}, "再次手动同步最早 " + data.next_manual_attempt.replace("T", " ")) : null,
       );
     }),
     h("p", {}, "Dota 版本资料：", badge(s.dota_knowledge?.state || "未同步"),
@@ -1911,7 +1936,8 @@ async function renderLogs(token) {
     x.module,
     x.code,
     x.scope || "—",
-    x.reason || "",
+    [...new Set([x.status, x.error_kind === "unknown" ? "故障详情不可识别" : x.error_kind, x.reason]
+      .filter(Boolean).map(label))].join(" · "),
     h(
       "span",
       { class: "mono" },
@@ -1930,7 +1956,7 @@ async function renderLogs(token) {
       h(
         "p",
         { class: "help" },
-        "仅列事件与简短决策原因，不存放完整提示词或密钥。每日/分片日志按配置自动清理。查看最近最多400条匹配记录。",
+        "原因列区分本地跳过、模型静默、预算与调用异常，支持按原因码搜索。每日或分片日志按配置自动清理，显示最近最多 400 条匹配记录。",
       ),
       h(
         "div",

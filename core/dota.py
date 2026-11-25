@@ -15,6 +15,7 @@ from .dota_details import (PATCH, ATTRIBUTES, NUM_FIELDS, ability_type, filter_m
                            talents_of, with_english_names)
 from .dota_knowledge import (KnowledgeStore, api_rows, latest_patch, patch_key,
                              validate_detail, validate_roster)
+from .research_sources import HTTPFailure
 from .util import (
     atomic_json,
     clean,
@@ -33,6 +34,12 @@ PUBLIC_STATS_URL = "https://api.opendota.com/api/heroStats"
 WEEKLY_STATS_URL = "https://www.dota2.com/webapi/IDOTA2Plus/GetPlusStatsData/v001"
 HERO_LIST_URL = BASE + "herolist?language=schinese"
 SOURCES = {"public": PUBLIC_STATS_URL, "weekly": WEEKLY_STATS_URL, "matchups": STATS_URL}
+STATS_SYNC_INTERVAL = 900
+STATS_MANUAL_INTERVAL = 60
+STATS_FAILURES = {
+    "timeout", "network_error", "http_error", "invalid_json", "invalid_structure",
+    "roster_unavailable", "storage_error", "interrupted", "unknown",
+}
 BRACKETS = {
     1: "先锋 Herald",
     2: "卫士 Guardian",
@@ -47,6 +54,20 @@ MAX_BALANCE_ERROR_PP = 0.5
 PUBLIC_SEGMENTS = ("pub", *(str(i) for i in BRACKETS))
 ALIAS_FILE = Path(__file__).resolve().parents[1] / "assets" / "dota-aliases.json"
 SNAP_RE = re.compile(r"^\d{8}\.json$")
+
+
+class InvalidStatsFormat(ValueError):
+    """Structural failure with a diagnostic containing only validated metadata."""
+
+
+async def write_stats_json(path, value):
+    # A cancelled task must not release its sync lock while the disk write is active.
+    worker = asyncio.create_task(asyncio.to_thread(atomic_json, path, value))
+    try:
+        await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        await asyncio.gather(worker, return_exceptions=True)
+        raise
 
 
 def require_int(value, low, high):
@@ -198,35 +219,46 @@ class StatsSnapshot:
         heroes = payload.get("heroes", [])
         groups = payload.get("ranked_hero_data", [])
         if not isinstance(groups, list):
-            raise ValueError("对抗分组不完整")
+            raise InvalidStatsFormat("对抗分组缺失或不是列表")
         self.index = hero_index(heroes, aliases, minimum=100 if strict else 2)
         ids = sorted(self.index.by_id)
         self.ranks = {}
         for group in groups:
+            if not isinstance(group, dict):
+                raise InvalidStatsFormat("对抗分组记录无效")
             rank = require_int(group.get("rank"), 0, 6)
             if rank in self.ranks:
-                raise ValueError("重复 rank")
+                raise InvalidStatsFormat(f"对抗分组 rank {rank} 重复")
             raw_rows = group.get("hero_data", [])
-            if len(raw_rows) != len(ids):
-                raise ValueError("rank 英雄列表不完整")
+            if not isinstance(raw_rows, list) or len(raw_rows) != len(ids):
+                count = len(raw_rows) if isinstance(raw_rows, list) else "缺失或非列表"
+                raise InvalidStatsFormat(f"对抗 rank {rank} 英雄列表异常（{count}，应为 {len(ids)}）")
             indexed = {}
             for r in raw_rows:
+                if not isinstance(r, dict):
+                    raise InvalidStatsFormat(f"对抗 rank {rank} 英雄记录无效")
                 hid = require_int(r.get("hero_id"), 1, 2000)
                 if hid not in ids or hid in indexed:
-                    raise ValueError("rank 英雄 ID 异常")
+                    raise InvalidStatsFormat(f"对抗 rank {rank} 英雄 ID {hid} 不在名单中或重复")
                 first = require_int(r.get("first_other_hero_id"), 1, 2001)
                 enemy = r.get("enemy_win_rate", [])
                 ally = r.get("ally_win_rate", [])
+                width = ids[-1] - hid
                 if (
                     first != hid + 1
                     or not isinstance(enemy, list)
                     or not isinstance(ally, list)
-                    or len(enemy) != ids[-1] - hid
-                    or len(ally) != ids[-1] - hid
+                    or len(enemy) != width
+                    or len(ally) != width
                 ):
-                    raise ValueError("对阵数组结构变化；拒绝覆盖旧快照")
+                    enemy_len = len(enemy) if isinstance(enemy, list) else "非列表"
+                    ally_len = len(ally) if isinstance(ally, list) else "非列表"
+                    raise InvalidStatsFormat(
+                        f"对阵 rank {rank} 英雄 {hid} 数组异常（起始 {first}，应为 {hid + 1}；"
+                        f"对抗 {enemy_len}、同队 {ally_len}，应各有 {width} 项）"
+                    )
                 if any(type(x) is not int or not 0 <= x <= 10000 for x in enemy + ally):
-                    raise ValueError("对阵数组值无效")
+                    raise InvalidStatsFormat(f"对阵 rank {rank} 英雄 {hid} 数组值无效")
                 indexed[hid] = {
                     "first": first,
                     "enemy": enemy,
@@ -241,10 +273,11 @@ class StatsSnapshot:
                 and indexed[a]["ally"][b - indexed[a]["first"]] > 0
             )
             if strict and valid < pairs * 0.95:
-                raise ValueError("有效配对不足95%；保留旧快照")
+                raise InvalidStatsFormat(f"对抗 rank {rank} 有效配对不足 95%（{valid}/{pairs}）")
             self.ranks[rank] = indexed
         if strict and set(self.ranks) != set(range(7)):
-            raise ValueError("rank 0-6 数据不完整")
+            missing = ", ".join(str(i) for i in range(7) if i not in self.ranks)
+            raise InvalidStatsFormat(f"对抗分组不完整（缺少 rank {missing}）")
 
     def pair(self, a, b, rank):
         if a == b:
@@ -542,7 +575,67 @@ class DotaService:
         self.detail_retry = {}
         self.last_status = {"state": "未同步", "sources": {}}
         self.last_sync_attempt = 0
+        self.sync_state_path = root / "stats_sync_state.json"
+        self.sync_state = self._load_sync_state()
         self.knowledge = KnowledgeStore(self, root / "knowledge", log)
+
+    def _load_sync_state(self):
+        try:
+            saved = read_json(self.sync_state_path)
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError):
+            self.log.emit("DOTA", "sync_state_read_failed", "WARNING")
+            return {}
+        if not isinstance(saved, dict):
+            return {}
+        state = {}
+        for source in SOURCES:
+            entry = saved.get(source)
+            if not isinstance(entry, dict):
+                continue
+            times = {
+                key: value for key in ("last_attempt", "last_manual", "retry_after")
+                if type(value := entry.get(key)) in (int, float) and 0 <= value <= 253402214399
+            }
+            kind = entry.get("failure_kind")
+            if isinstance(kind, str) and kind in STATS_FAILURES:
+                times.update(failure_kind=kind, reason=clean(entry.get("reason"), 160, urls=True))
+                failures = entry.get("failures")
+                times["failures"] = failures if type(failures) is int and 1 <= failures <= 8 else 1
+            success = entry.get("success_date")
+            if isinstance(success, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", success):
+                times["success_date"] = success
+            state[source] = times
+        return state
+
+    async def _save_sync_state(self):
+        try:
+            await write_stats_json(self.sync_state_path, self.sync_state)
+        except OSError:
+            self.log.emit("DOTA", "sync_state_write_failed", "WARNING")
+
+    def _pending_sources(self, existing, at, *, force=False, manual=False):
+        pending = []
+        today = day_key(at)
+        for source, snapshot in existing.items():
+            health = self.sync_state.get(source, {})
+            verified_today = snapshot and snapshot.day == today
+            if force:
+                pending.append(source)
+            elif manual:
+                last_manual = health.get("last_manual")
+                if ((not verified_today or health.get("failure_kind"))
+                    and (last_manual is None or at >= last_manual + STATS_MANUAL_INTERVAL)):
+                    pending.append(source)
+            elif not verified_today and at >= health.get("retry_after", 0):
+                pending.append(source)
+        return pending
+
+    async def auto_sync_due(self, cfg):
+        if self.sync_lock.locked():
+            return False
+        return bool(self._pending_sources(await self._existing(cfg), now()))
 
     def _paths(self, cfg, day=None, source="matchups"):
         roots = [self.source_dirs[source]]
@@ -610,11 +703,18 @@ class DotaService:
                 lambda: {source: self._load_stats(cfg, source=source) for source in SOURCES}
             )
 
-    @staticmethod
-    def _source_state(snapshot, state=None, reason=""):
+    def _source_state(self, source, snapshot, state=None):
+        health = self.sync_state.get(source, {})
+        failure_kind = health.get("failure_kind")
+        if not state:
+            if failure_kind:
+                state = "同步失败，保留旧数据" if snapshot else "同步失败，无已校验数据"
+            else:
+                state = "已读取快照" if snapshot else "无已校验数据"
         info = {
-            "state": state or ("已读取快照" if snapshot else "无已校验数据"),
+            "state": state,
             "date": snapshot.day if snapshot else None,
+            "success_date": snapshot.day if snapshot else health.get("success_date"),
         }
         if snapshot:
             info.update(heroes=len(snapshot.index.by_id), stale=snapshot.day != day_key())
@@ -623,20 +723,38 @@ class DotaService:
                 if snapshot.source == "public":
                     info["available_brackets"] = [i for i in BRACKETS if str(i) in snapshot.groups]
                     info["weighted_win_rate_pct"] = snapshot.quality["pub"]["weighted_win_rate_pct"]
-        if reason:
-            info["reason"] = reason
+        if health.get("last_attempt"):
+            info["last_attempt"] = stamp(health["last_attempt"])
+        if failure_kind:
+            info.update(failure_kind=failure_kind, reason=health.get("reason", ""))
+        at = now()
+        retry_after = health.get("retry_after", 0)
+        if retry_after > at:
+            info["next_attempt"] = stamp(retry_after)
+        if "last_manual" in health and health["last_manual"] + STATS_MANUAL_INTERVAL > at:
+            info["next_manual_attempt"] = stamp(health["last_manual"] + STATS_MANUAL_INTERVAL)
         return info
+
+    @staticmethod
+    def _sync_overview(states, updated=()):
+        if any(s.get("failure_kind") for s in states.values()):
+            available = any(s["date"] and not s.get("failure_kind") for s in states.values())
+            return "部分同步成功" if updated or available else "同步失败"
+        if updated:
+            return "同步成功"
+        if all(s["date"] == day_key() for s in states.values()):
+            return "今日快照已存在"
+        return "已读取快照" if any(s["date"] for s in states.values()) else "未同步"
 
     async def status(self, cfg):
         # The management page can still be opened during a slow refresh.
-        if not self.last_status["sources"] and not self.sync_lock.locked():
-            existing = await self._existing(cfg)
-            if not self.sync_lock.locked():
-                self.last_status = {
-                    "state": "已读取快照" if any(existing.values()) else "未同步",
-                    "sources": {k: self._source_state(s) for k, s in existing.items()},
-                }
-        return self.last_status
+        if self.sync_lock.locked():
+            return self.last_status
+        existing = await self._existing(cfg)
+        if self.sync_lock.locked():
+            return self.last_status
+        states = {k: self._source_state(k, s) for k, s in existing.items()}
+        return {"state": self._sync_overview(states), "sources": states}
 
     async def _fetch(self, url, cfg):
         # Only fixed Valve/OpenDota endpoints, never a model-supplied URL or credential.
@@ -649,15 +767,15 @@ class DotaService:
                 headers={"User-Agent": "FiyuCore/0.1 (Dota data reader)"},
             ) as response:
                 if response.status != 200:
-                    raise ValueError(f"统计接口 HTTP {response.status}")
+                    raise HTTPFailure(response.status)
                 data = bytearray()
                 async for chunk in response.content.iter_chunked(65536):
                     data.extend(chunk)
                     if len(data) > 32 * 1024 * 1024:
-                        raise ValueError("接口数据过大")
+                        raise InvalidStatsFormat("接口数据过大")
                 result = json.loads(data)
                 if not isinstance(result, list if url == PUBLIC_STATS_URL else dict):
-                    raise ValueError("统计接口 JSON 结构无效")
+                    raise InvalidStatsFormat("统计接口 JSON 根节点类型错误")
                 return result
 
     def _choose_roster(self, roster_data, existing, fetched):
@@ -727,86 +845,134 @@ class DotaService:
             payload["hero_stats"] = [{k: v for k, v in r.items() if k in keys} for r in data]
         return self._validate_snapshot(source, payload)
 
-    async def sync(self, cfg, force=False):
+    @staticmethod
+    def _sync_failure(error, stage):
+        if stage == "roster":
+            return "roster_unavailable", "没有可用于校验统计的完整英雄名单", True
+        if stage == "storage":
+            return "storage_error", "写入快照失败", False
+        if isinstance(error, InvalidStatsFormat):
+            return "invalid_structure", str(error), True
+        if stage == "validation":
+            # Validator messages are generated locally, without response fields.
+            reason = clean(str(error), 160, urls=True) if isinstance(error, ValueError) else "统计结构或记录不完整"
+            return "invalid_structure", reason, True
+        if isinstance(error, HTTPFailure):
+            transient = error.status in (408, 429) or 500 <= error.status <= 599
+            return "http_error", f"统计接口 HTTP {error.status}", not transient
+        if isinstance(error, (json.JSONDecodeError, UnicodeError)):
+            return "invalid_json", "统计接口返回无效 JSON", True
+        if isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+            return "timeout", "统计接口请求超时", False
+        if isinstance(error, (aiohttp.ClientError, OSError)):
+            return "network_error", "统计接口连接或传输失败", False
+        return "unknown", "统计接口请求失败", False
+
+    def _mark_sync_failed(self, source, kind, reason, structural):
+        health = self.sync_state[source]
+        failures = min(8, health.get("failures", 0) + 1) if health.get("failure_kind") == kind else 1
+        base, limit = (4 * 3600, 24 * 3600) if structural else (STATS_SYNC_INTERVAL, 2 * 3600)
+        health.update(failure_kind=kind, reason=reason, failures=failures,
+                      retry_after=now() + min(limit, base * 2 ** (failures - 1)))
+
+    async def sync(self, cfg, force=False, *, manual=False):
         async with self.sync_lock:
-            self.last_sync_attempt = now()
-            today = day_key()
+            started = self.last_sync_attempt = now()
+            today = day_key(started)
             existing = await self._existing(cfg)
-            pending = [k for k, s in existing.items() if force or not s or s.day != today]
+            pending = self._pending_sources(existing, started, force=force, manual=manual)
+            for source in pending:
+                health = self.sync_state.setdefault(source, {})
+                health["last_attempt"] = started
+                # Record a short hold before starting network I/O, in case the process stops.
+                health["retry_after"] = max(health.get("retry_after", 0), started + STATS_SYNC_INTERVAL)
+                if manual:
+                    health["last_manual"] = started
             states = {
-                k: self._source_state(s, "今日快照已存在" if k not in pending else "同步中")
+                k: self._source_state(k, s, "同步中" if k in pending else
+                                      "今日快照已存在" if s and s.day == today and
+                                      not self.sync_state.get(k, {}).get("failure_kind") else None)
                 for k, s in existing.items()
             }
             if not pending:
-                self.last_status = {"state": "今日快照已存在", "sources": states}
+                self.last_status = {"state": self._sync_overview(states), "sources": states}
                 return self.last_status
             self.last_status = {"state": "同步中", "sources": states}
-            results = await asyncio.gather(
-                self._fetch(HERO_LIST_URL, cfg),
-                *(self._fetch(SOURCES[k], cfg) for k in pending),
-                return_exceptions=True,
-            )
-            fetched = dict(zip(pending, results[1:]))
-            roster_error = None
-            try:
-                heroes, roster_source = await asyncio.to_thread(
-                    self._choose_roster, results[0], existing, fetched
-                )
-            except ValueError as e:
-                roster_error = e
             updated = []
-            observed = stamp()
-            observed_day = observed[:10]
-            for source in pending:
+            remaining = set(pending)
+            try:
+                await self._save_sync_state()
+                results = await asyncio.gather(
+                    self._fetch(HERO_LIST_URL, cfg),
+                    *(self._fetch(SOURCES[k], cfg) for k in pending),
+                    return_exceptions=True,
+                )
+                fetched = dict(zip(pending, results[1:]))
+                roster_error = None
                 try:
-                    data = fetched[source]
-                    if isinstance(data, BaseException):
-                        raise data
-                    if roster_error:
-                        raise roster_error
-                    validated = await asyncio.to_thread(
-                        self._new_snapshot, source, data, heroes, roster_source, observed_day, observed
+                    heroes, roster_source = await asyncio.to_thread(
+                        self._choose_roster, results[0], existing, fetched
                     )
-                    # Invalid data never replaces a previously validated file.
-                    async with self.stats_lock:
-                        await asyncio.to_thread(
-                            atomic_json,
-                            self.source_dirs[source] / (validated.day.replace("-", "") + ".json"),
-                            validated.raw,
+                except ValueError as e:
+                    roster_error = e
+                observed = stamp()
+                observed_day = observed[:10]
+                for source in pending:
+                    stage = "fetch"
+                    try:
+                        data = fetched[source]
+                        if isinstance(data, BaseException):
+                            raise data
+                        stage = "roster"
+                        if roster_error:
+                            raise roster_error
+                        stage = "validation"
+                        validated = await asyncio.to_thread(
+                            self._new_snapshot, source, data, heroes, roster_source, observed_day, observed
                         )
-                        for key in list(self.cached_stats):
-                            if key[0] == source:
-                                self.cached_stats.pop(key)
-                    states[source] = self._source_state(validated, "同步成功")
-                    updated.append(source)
-                    self.log.emit("DOTA", "sync_ok", task=source, heroes=len(validated.index.by_id))
-                except Exception as e:
-                    reason = (
-                        clean(str(e), 160, urls=True)
-                        if isinstance(e, ValueError) else type(e).__name__
-                    )
-                    states[source] = self._source_state(
-                        existing[source],
-                        "同步失败，保留旧数据" if existing[source] else "同步失败，无已校验数据",
-                        reason,
-                    )
-                    self.log.emit(
-                        "DOTA", "sync_failed", "WARNING", task=source,
-                        reason=reason, exception=type(e).__name__,
-                    )
+                        stage = "storage"
+                        # Only a validated payload replaces this source's snapshot.
+                        async with self.stats_lock:
+                            await write_stats_json(
+                                self.source_dirs[source] / (validated.day.replace("-", "") + ".json"),
+                                validated.raw,
+                            )
+                            for key in list(self.cached_stats):
+                                if key[0] == source:
+                                    self.cached_stats.pop(key)
+                    except Exception as e:
+                        kind, reason, structural = self._sync_failure(e, stage)
+                        self._mark_sync_failed(source, kind, reason, structural)
+                        states[source] = self._source_state(source, existing[source])
+                        self.log.emit(
+                            "DOTA", "sync_failed", "WARNING", task=source, status=kind,
+                            reason=reason, exception=type(e).__name__,
+                            retry_after=int(self.sync_state[source]["retry_after"]),
+                        )
+                    else:
+                        health = self.sync_state[source]
+                        for key in ("failure_kind", "reason", "retry_after", "failures"):
+                            health.pop(key, None)
+                        health["success_date"] = validated.day
+                        states[source] = self._source_state(source, validated, "同步成功")
+                        updated.append(source)
+                        self.log.emit("DOTA", "sync_ok", task=source, heroes=len(validated.index.by_id))
+                    remaining.discard(source)
+            except asyncio.CancelledError:
+                for source in remaining:
+                    health = self.sync_state[source]
+                    if not health.get("failure_kind"):
+                        health.update(failure_kind="interrupted", reason="统计同步中断", failures=1)
+                    states[source] = self._source_state(source, existing[source])
+                raise
+            finally:
+                self.last_status = {"state": self._sync_overview(states, updated), "sources": states}
+                await self._save_sync_state()
             if updated:
                 try:
                     await asyncio.to_thread(self._prune, cfg, updated)
                 except OSError:
                     self.log.emit("DOTA", "snapshot_cleanup_failed", "WARNING")
-            count = len(updated)
-            if count == len(pending):
-                state = "同步成功"
-            elif count or len(pending) < len(SOURCES):
-                state = "部分同步成功"
-            else:
-                state = "同步失败"
-            self.last_status = {"state": state, "sources": states}
             return self.last_status
 
     def _prune(self, cfg, sources):

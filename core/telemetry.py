@@ -10,6 +10,8 @@ from collections import defaultdict, deque
 from datetime import date, timedelta
 from pathlib import Path
 
+from aiohttp import ClientConnectionError
+
 from .util import MAX_REPLY_CHARS, clean, conservative_tokens, day_key, dump, stamp
 
 
@@ -29,6 +31,108 @@ class BalanceCheckError(ValueError):
         if code == "http" and type(http_status) is int:
             reason += f"（{http_status}）"
         super().__init__(reason)
+
+
+_MODEL_ERROR_REASONS = {
+    "provider_unavailable": "模型服务当前不可用",
+    "timeout": "模型服务响应超时",
+    "rate_limit": "模型服务限制了调用频率",
+    "quota_exhausted": "模型服务额度不足",
+    "content_rejected": "模型服务拒绝处理这条请求",
+    "unsupported_modality": "模型服务不支持该媒体类型",
+    "invalid_response": "模型返回的格式无效",
+    "unknown": "没有可识别的模型故障详情",
+}
+
+# Keep only documented machine-readable values. Messages and raw completion data
+# may contain private prompts, URL query strings or credentials.
+_PROVIDER_ERROR_KINDS = {
+    "DataInspectionFailed": "content_rejected",
+    "data_inspection_failed": "content_rejected",
+    "content_policy_violation": "content_rejected",
+    "content_filter": "content_rejected",
+    "image_content_policy_violation": "content_rejected",
+    "unsupported_image_media_type": "unsupported_modality",
+    "insufficient_quota": "quota_exhausted",
+    "Throttling.AllocationQuota": "quota_exhausted",
+    "Arrearage": "quota_exhausted",
+    "isv.OUT_OF_SERVICE": "quota_exhausted",
+    "Throttling.RateQuota": "rate_limit",
+    "rate_limit_exceeded": "rate_limit",
+    "InvalidApiKey": "provider_unavailable",
+    "invalid_api_key": "provider_unavailable",
+    "AccessDenied": "provider_unavailable",
+    "access_denied": "provider_unavailable",
+    "ModelNotFound": "provider_unavailable",
+    "model_not_found": "provider_unavailable",
+    "ServiceUnavailable": "provider_unavailable",
+}
+
+
+def _http_error_status(value):
+    return value if type(value) is int and 400 <= value <= 599 else None
+
+
+def _provider_error_code(value):
+    return value if type(value) is str and value in _PROVIDER_ERROR_KINDS else None
+
+
+class ModelFailure(RuntimeError):
+    """A model failure with only safe fields for the plugin log and dashboard."""
+
+    def __init__(self, category, *, http_status=None, provider_code=None):
+        self.category = (
+            category if type(category) is str and category in _MODEL_ERROR_REASONS else "unknown"
+        )
+        self.http_status = _http_error_status(http_status)
+        self.provider_code = _provider_error_code(provider_code)
+        super().__init__(_MODEL_ERROR_REASONS[self.category])
+
+    def log_fields(self):
+        fields = {"error_kind": self.category}
+        if self.http_status is not None:
+            fields["http_status"] = self.http_status
+        if self.provider_code is not None:
+            fields["provider_code"] = self.provider_code
+        return fields
+
+
+def _model_failure(source):
+    if isinstance(source, ModelFailure):
+        return source
+    # OpenAI-compatible SDKs expose the code directly or as body.error.code.
+    body = getattr(source, "body", None) if isinstance(source, Exception) else None
+    error = body.get("error") if isinstance(body, dict) else None
+    samples = (
+        getattr(source, "error_code", None),
+        getattr(source, "code", None),
+        error.get("code") if isinstance(error, dict) else None,
+        body.get("code") if isinstance(body, dict) else None,
+    )
+    code = next((code for value in samples if (code := _provider_error_code(value))), None)
+    statuses = (
+        getattr(source, "status_code", None),
+        getattr(source, "status", None),
+        getattr(getattr(source, "response", None), "status_code", None),
+    )
+    status = next((status for v in statuses if (status := _http_error_status(v))), None)
+    if code:
+        kind = _PROVIDER_ERROR_KINDS[code]
+    elif isinstance(source, (TimeoutError, asyncio.TimeoutError)) or status in (408, 504):
+        kind = "timeout"
+    elif status == 429:
+        kind = "rate_limit"
+    elif status == 402:
+        kind = "quota_exhausted"
+    elif (
+        isinstance(source, (ConnectionError, ClientConnectionError))
+        or status in (401, 403, 404)
+        or (status is not None and status >= 500)
+    ):
+        kind = "provider_unavailable"
+    else:
+        kind = "unknown"
+    return ModelFailure(kind, http_status=status, provider_code=code)
 
 
 class DailyLog:
@@ -60,7 +164,19 @@ class DailyLog:
         if reason:
             entry["reason"] = clean(reason, 160)
         for k, v in metrics.items():
-            if type(v) in (float, int, bool) or v is None:
+            if k == "error_kind":
+                if type(v) is str and v in _MODEL_ERROR_REASONS:
+                    entry[k] = v
+            elif k == "provider_code":
+                if code := _provider_error_code(v):
+                    entry[k] = code
+            elif k == "http_status":
+                if status := _http_error_status(v):
+                    entry[k] = status
+            elif module == "VISION" and k == "stage":
+                if v in ("observe", "pre-decision", "reply"):
+                    entry[k] = v
+            elif type(v) in (float, int, bool) or v is None:
                 entry[k] = v
             elif module == "REPLY" and k == "part_chars" and isinstance(v, list):
                 entry[k] = [n for n in v[:8] if type(n) is int and 0 <= n <= MAX_REPLY_CHARS]
@@ -170,9 +286,9 @@ class ModelGateway:
     async def provider(self, module: str, umo: str, config: dict | None = None) -> str:
         cfg = config or self.cfg.snapshot()
         m = cfg["models"]
-        if module == "vision":
+        if module in ("vision", "vision_observe"):
             if not m["vision_provider"]:
-                raise ValueError("未配置视觉模型")
+                raise ModelFailure("provider_unavailable")
             return m["vision_provider"]
         if module == "embedding":
             return m["embedding_provider"]
@@ -189,10 +305,10 @@ class ModelGateway:
         self, module: str, estimate: int, background: bool, priority: bool
     ):
         d = day_key()
-        live = self.cfg.snapshot()
-        settings = live["budget"]
         async with self.lock:
             usage = await self.store.call("usage_today", d)
+            live = self.cfg.snapshot()
+            settings = live["budget"]
             used = usage["tokens"] + self.reserved[d]
             limit = settings["daily_tokens"]
             if limit and (
@@ -204,13 +320,26 @@ class ModelGateway:
                 )
             ):
                 raise BudgetExceeded("今日 Token 预算不足或已达到后台暂停线")
-            module_limit = settings["module_call_limits"].get(module, 0)
-            if (
-                module_limit
-                and usage["modules"].get(module, 0) + self.reserved_calls[(d, module)]
-                >= module_limit
-            ):
+
+            def calls_used(task):
+                return usage["modules"].get(task, 0) + self.reserved_calls[(d, task)]
+
+            limit_module = "vision" if module == "vision_observe" else module
+            module_limit = settings["module_call_limits"].get(limit_module, 0)
+            counted_modules = (
+                ("vision", "vision_observe") if limit_module == "vision" else (module,)
+            )
+            if module_limit and sum(calls_used(task) for task in counted_modules) >= module_limit:
                 raise BudgetExceeded("该模块今日调用次数已达上限")
+            if module == "vision_observe":
+                reply = live["reply"]
+                if (
+                    live["access"]["mode"] != "active"
+                    or not reply["image_enabled"]
+                    or reply.get("vision_strategy") != "full"
+                    or calls_used(module) >= reply.get("vision_observe_daily_calls", 0)
+                ):
+                    raise BudgetExceeded("独立图片观察已关闭或达到每日调用上限")
             if module == "research":
                 research = live["research"]
                 if (not research["enabled"] or live["access"]["mode"] != "active"
@@ -248,7 +377,7 @@ class ModelGateway:
             self.condition.notify_all()
 
     async def _record(
-        self, day, module, provider, estimate, failed, usage, elapsed, scope
+        self, day, module, provider, estimate, failed, usage, elapsed, scope, failure=None
     ):
         other, cached, output, estimated = usage
         async with self.lock:
@@ -284,6 +413,7 @@ class ModelGateway:
             estimated=estimated,
             elapsed_ms=int(elapsed * 1000),
             failed=failed,
+            **(failure.log_fields() if failure else {}),
         )
 
     async def generate(
@@ -305,9 +435,16 @@ class ModelGateway:
         output_reserve=300,
     ):
         cfg = config or self.cfg.snapshot()
-        provider = await self.provider(module, umo, cfg)
-        if not provider:
-            raise ValueError("未找到聊天模型 Provider")
+        try:
+            provider = await self.provider(module, umo, cfg)
+            if not provider:
+                raise ModelFailure("provider_unavailable")
+        except Exception as exc:
+            failure = _model_failure(exc)
+            self.log.emit(
+                "TOKEN", "model_unavailable", scope=scope, task=module, **failure.log_fields()
+            )
+            raise failure from None
         # Account for repeated tool round input and persona examples. Only a conservative estimate is used for reservation.
         estimate_input = conservative_tokens(
             system + prompt + str(contexts or "") + str(tool_results or "")
@@ -321,31 +458,44 @@ class ModelGateway:
         started = time.monotonic()
         resp = None
         failed = True
+        failure = None
         try:
             d = await self._reserve(module, reservation, background, priority)
-            resp = await asyncio.wait_for(
-                self.host.generate(
-                    provider,
-                    prompt,
-                    system,
-                    tools=tools,
-                    contexts=contexts,
-                    tool_results=tool_results,
-                    images=images,
-                ),
-                timeout=timeout or cfg["models"]["timeout_seconds"],
-            )
+            try:
+                resp = await asyncio.wait_for(
+                    self.host.generate(
+                        provider,
+                        prompt,
+                        system,
+                        tools=tools,
+                        contexts=contexts,
+                        tool_results=tool_results,
+                        images=images,
+                    ),
+                    timeout=timeout or cfg["models"]["timeout_seconds"],
+                )
+            except Exception as exc:
+                failure = _model_failure(exc)
+                raise failure from None
             if getattr(resp, "role", None) == "err":
-                raise RuntimeError("模型返回失败")
+                failure = _model_failure(resp)
+                raise failure
+            if not hasattr(resp, "completion_text"):
+                failure = ModelFailure("invalid_response")
+                raise failure
             failed = False
             return resp
         finally:
             try:
                 if d:
                     usage = getattr(resp, "usage", None)
-                    other = int(getattr(usage, "input_other", 0) or 0)
-                    cached = int(getattr(usage, "input_cached", 0) or 0)
-                    output = int(getattr(usage, "output", 0) or 0)
+                    try:
+                        other, cached, output = (
+                            max(0, int(getattr(usage, field, 0) or 0))
+                            for field in ("input_other", "input_cached", "output")
+                        )
+                    except (ValueError, TypeError, OverflowError):
+                        other = cached = output = 0
                     estimated = not bool(other + cached + output)
                     if estimated:
                         other = estimate_input
@@ -353,7 +503,7 @@ class ModelGateway:
                             conservative_tokens(
                                 str(getattr(resp, "completion_text", "") or "")
                             )
-                            if resp
+                            if resp and not failed
                             else 0
                         )
                     await self._record(
@@ -365,6 +515,7 @@ class ModelGateway:
                         (other, cached, output, estimated),
                         time.monotonic() - started,
                         scope,
+                        failure,
                     )
             finally:
                 await self._release()
