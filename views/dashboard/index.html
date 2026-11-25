@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Fiyu Core · 管理中心</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">F</div>
+          <div><strong>Fiyu Core</strong><span>CHAT ENGINE · 0.2.6</span></div>
+        </div>
+        <nav id="nav" aria-label="模块导航">
+          <button data-module="overview" class="selected" aria-current="page">
+            总览 <span>01</span>
+          </button>
+          <button data-module="config">配置中心 <span>02</span></button>
+          <button data-module="people">人物与记忆 <span>03</span></button>
+          <button data-module="learning">学习中心 <span>04</span></button>
+          <button data-module="relay">跨会话转达 <span>05</span></button>
+          <button data-module="operations">用量与日志 <span>06</span></button>
+        </nav>
+        <div class="side-note">
+          <span class="dot" id="modeDot"></span><span id="modeText">连接中</span
+          ><br /><small>运行于 AstrBot · 本地数据</small>
+        </div>
+      </aside>
+      <main>
+        <header>
+          <div>
+            <div class="eyebrow">肥鱼 · 控制台</div>
+            <h1 id="pageTitle">运行总览</h1>
+            <p id="pageDesc">回复、记忆与工具统一运行状态</p>
+          </div>
+          <button id="refresh" class="button secondary">刷新</button>
+        </header>
+        <div id="sectionTabs" class="section-tabs" role="group" aria-label="模块内页面" hidden></div>
+        <div id="notice" role="status" class="notice" hidden></div>
+        <section id="page" aria-live="polite">
+          <div class="loading">正在连接 AstrBot…</div>
+        </section>
+        <footer>
+          Fiyu Core v0.2.6 · 配置即时生效 · 日志与长期记忆分别管理
+        </footer>
+      </main>
+    </div>
+    <dialog id="dialog">
+      <form id="dialogForm">
+        <div class="dialog-header">
+          <h2 id="dialogTitle"></h2>
+          <button
+            type="button"
+            class="icon-button"
+            id="dialogClose"
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </div>
+        <div id="dialogBody"></div>
+        <div class="dialog-actions">
+          <button type="button" class="button secondary" id="dialogCancel">
+            取消</button
+          ><button type="submit" class="button primary" id="dialogSubmit">
+            保存
+          </button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "display_name": "Fiyu Core · 肥鱼聊天引擎",
+    "desc": "独立人格、群聊决策、分层记忆、表达与自主学习、受控转达、Dota 2 结构化数据及管理界面。"
+  },
+  "views": {"dashboard": {"title": "肥鱼管理中心"}},
+  "pages": {"dashboard": {"title": "肥鱼管理中心"}}
+}

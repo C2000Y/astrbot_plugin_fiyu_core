@@ -1,0 +1,1 @@
+# aiohttp、jsonschema 等由 AstrBot 4.29.x 自带；不额外升级宿主的依赖。

@@ -1,0 +1,1743 @@
+{
+  "heroes": {
+    "antimage": [
+      "敌法",
+      "AM",
+      "Magina"
+    ],
+    "axe": [
+      "蒙哥可汗",
+      "Mogul Khan"
+    ],
+    "bane": [
+      "痛苦之源",
+      "霍乱",
+      "Bane Elemental"
+    ],
+    "bloodseeker": [
+      "血魔",
+      "BS",
+      "Strygwyr"
+    ],
+    "crystal_maiden": [
+      "冰女",
+      "冰妹",
+      "CM",
+      "Rylai"
+    ],
+    "drow_ranger": [
+      "小黑",
+      "黑弓",
+      "黑暗游侠",
+      "Drow",
+      "DR",
+      "Traxex"
+    ],
+    "earthshaker": [
+      "小牛",
+      "神牛",
+      "撼地神牛",
+      "Earth Shaker",
+      "Raigor"
+    ],
+    "juggernaut": [
+      "剑圣",
+      "奶棒人",
+      "Jugg",
+      "Yurnero"
+    ],
+    "mirana": [
+      "白虎",
+      "月女",
+      "月之女祭司",
+      "PotM",
+      "PoM"
+    ],
+    "morphling": [
+      "水人",
+      "Morph",
+      "Morp"
+    ],
+    "nevermore": [
+      "SF",
+      "奈文摩尔",
+      "Nevermore"
+    ],
+    "phantom_lancer": [
+      "幻长",
+      "猴子",
+      "PL",
+      "Azwraith"
+    ],
+    "puck": [
+      "精灵龙",
+      "仙女龙",
+      "Faerie Dragon"
+    ],
+    "pudge": [
+      "屠夫",
+      "胖子",
+      "Butcher"
+    ],
+    "razor": [
+      "电魂",
+      "电棍",
+      "剃刀",
+      "Lightning Revenant"
+    ],
+    "sand_king": [
+      "沙王",
+      "沙子",
+      "SK",
+      "Crixalis"
+    ],
+    "storm_spirit": [
+      "蓝猫",
+      "风暴",
+      "SS",
+      "Storm",
+      "Raijin"
+    ],
+    "sven": [
+      "流浪剑客",
+      "流浪",
+      "SV",
+      "Rogue Knight"
+    ],
+    "tiny": [
+      "山岭巨人",
+      "山岭",
+      "Stone Giant"
+    ],
+    "vengefulspirit": [
+      "复仇",
+      "VS",
+      "Venge",
+      "Shendelzare"
+    ],
+    "windrunner": [
+      "风行",
+      "风行者",
+      "WR",
+      "Windrunner",
+      "Lyralei"
+    ],
+    "zuus": [
+      "众神之王",
+      "矮子宙斯",
+      "Zeus"
+    ],
+    "kunkka": [
+      "船长",
+      "海军上将",
+      "Admiral",
+      "Coco"
+    ],
+    "lina": [
+      "火女",
+      "秀逗魔导士",
+      "Slayer"
+    ],
+    "lion": [
+      "恶魔巫师",
+      "恶魔巫师莱恩",
+      "Demon Witch"
+    ],
+    "shadow_shaman": [
+      "小Y",
+      "小歪",
+      "暗影萨满",
+      "Rhasta"
+    ],
+    "slardar": [
+      "大鱼",
+      "大鱼人",
+      "鱼人守卫",
+      "Slard"
+    ],
+    "tidehunter": [
+      "潮汐",
+      "TH",
+      "Leviathan"
+    ],
+    "witch_doctor": [
+      "51",
+      "巫医",
+      "WD",
+      "Vol'jin"
+    ],
+    "lich": [
+      "巫妖王",
+      "Kel'Thuzad",
+      "Ethreain"
+    ],
+    "riki": [
+      "隐刺",
+      "隐形刺客",
+      "SA",
+      "Rikimaru"
+    ],
+    "enigma": [
+      "谜团",
+      "黑洞哥",
+      "Darchrow"
+    ],
+    "tinker": [
+      "TK",
+      "修补",
+      "Boush"
+    ],
+    "sniper": [
+      "火枪",
+      "矮人狙击手",
+      "Kardel"
+    ],
+    "necrolyte": [
+      "死灵法",
+      "死灵法师",
+      "NEC",
+      "Necro",
+      "Necrolyte",
+      "Rotund'jere"
+    ],
+    "warlock": [
+      "WL",
+      "术士",
+      "Demnok"
+    ],
+    "beastmaster": [
+      "BM",
+      "兽王",
+      "Rexxar",
+      "Karroch"
+    ],
+    "queenofpain": [
+      "女王",
+      "痛苦女王",
+      "QoP",
+      "Akasha"
+    ],
+    "venomancer": [
+      "剧毒",
+      "Veno",
+      "Venom",
+      "Lesale"
+    ],
+    "faceless_void": [
+      "虚空",
+      "假面",
+      "JB脸",
+      "FV",
+      "Darkterror"
+    ],
+    "skeleton_king": [
+      "骷髅王",
+      "骷髅",
+      "WK",
+      "SNK",
+      "Skeleton King",
+      "Ostarion"
+    ],
+    "death_prophet": [
+      "DP",
+      "死亡先知",
+      "Krobelus"
+    ],
+    "phantom_assassin": [
+      "幻刺",
+      "PA",
+      "Mortred"
+    ],
+    "pugna": [
+      "骨法",
+      "遗忘法师",
+      "Oblivion"
+    ],
+    "templar_assassin": [
+      "圣堂",
+      "TA",
+      "Lanaya"
+    ],
+    "viper": [
+      "毒龙",
+      "冥界亚龙",
+      "VIP"
+    ],
+    "luna": [
+      "月骑",
+      "月之骑士",
+      "Moon Rider"
+    ],
+    "dragon_knight": [
+      "龙骑",
+      "DK",
+      "Davion"
+    ],
+    "dazzle": [
+      "暗牧",
+      "暗影牧师",
+      "Shadow Priest"
+    ],
+    "rattletrap": [
+      "发条",
+      "发条地精",
+      "CG",
+      "Clock",
+      "Rattletrap"
+    ],
+    "leshrac": [
+      "老鹿",
+      "TS",
+      "Lesh",
+      "受折磨的灵魂"
+    ],
+    "furion": [
+      "先知",
+      "NP",
+      "Fur",
+      "Furion"
+    ],
+    "life_stealer": [
+      "小狗",
+      "LS",
+      "Naix",
+      "食尸鬼"
+    ],
+    "dark_seer": [
+      "黑贤",
+      "兔子",
+      "DS",
+      "Ish'kafel"
+    ],
+    "clinkz": [
+      "骨弓",
+      "小骷髅",
+      "骷髅射手",
+      "Bone Fletcher"
+    ],
+    "omniknight": [
+      "全能",
+      "OK",
+      "Omni",
+      "Purist"
+    ],
+    "enchantress": [
+      "小鹿",
+      "Enchant",
+      "Ench",
+      "Aiushtha"
+    ],
+    "huskar": [
+      "神灵",
+      "神灵武士",
+      "Hus"
+    ],
+    "night_stalker": [
+      "夜魔",
+      "NS",
+      "Balanar"
+    ],
+    "broodmother": [
+      "蜘蛛",
+      "育母",
+      "Brood",
+      "BM蜘蛛"
+    ],
+    "bounty_hunter": [
+      "赏金",
+      "BH",
+      "Gondar"
+    ],
+    "weaver": [
+      "蚂蚁",
+      "地穴编织者",
+      "NW",
+      "Skitskurr"
+    ],
+    "jakiro": [
+      "双头龙",
+      "双头",
+      "THD"
+    ],
+    "batrider": [
+      "蝙蝠",
+      "Bat"
+    ],
+    "chen": [
+      "圣骑士",
+      "Chen",
+      "Holy Knight"
+    ],
+    "spectre": [
+      "幽鬼",
+      "UG",
+      "Spec",
+      "Mercurial"
+    ],
+    "ancient_apparition": [
+      "冰魂",
+      "冰棍",
+      "AA",
+      "Kaldr"
+    ],
+    "doom_bringer": [
+      "末日",
+      "末日爸爸",
+      "Doom",
+      "Lucifer"
+    ],
+    "ursa": [
+      "熊战",
+      "小熊",
+      "拍拍熊",
+      "拍拍",
+      "Ulfsaar"
+    ],
+    "spirit_breaker": [
+      "白牛",
+      "裂魂",
+      "SB",
+      "Bara",
+      "Barathrum"
+    ],
+    "gyrocopter": [
+      "飞机",
+      "矮人直升机",
+      "Gyro",
+      "Aurel"
+    ],
+    "alchemist": [
+      "炼金",
+      "GA",
+      "Alch",
+      "Razzil"
+    ],
+    "invoker": [
+      "卡尔",
+      "召唤师",
+      "Carl",
+      "Kael",
+      "Invo"
+    ],
+    "silencer": [
+      "沉默",
+      "沉默术士",
+      "Nortrom"
+    ],
+    "obsidian_destroyer": [
+      "黑鸟",
+      "黑曜毁灭者",
+      "殁境神蚀者",
+      "OD",
+      "Obsidian Destroyer",
+      "Outworld Devourer"
+    ],
+    "lycan": [
+      "狼人",
+      "Lyc",
+      "Banehallow"
+    ],
+    "brewmaster": [
+      "熊猫",
+      "熊猫酒仙",
+      "Panda",
+      "Brew",
+      "Mangix"
+    ],
+    "shadow_demon": [
+      "毒狗",
+      "SD",
+      "Eredar"
+    ],
+    "lone_druid": [
+      "熊德",
+      "德鲁伊",
+      "LD",
+      "Sylla"
+    ],
+    "chaos_knight": [
+      "混沌",
+      "CK",
+      "Nessaj"
+    ],
+    "meepo": [
+      "地卜师",
+      "米波",
+      "狗头人",
+      "Geomancer"
+    ],
+    "treant": [
+      "大树",
+      "树精",
+      "Treant",
+      "Rooftrellen"
+    ],
+    "ogre_magi": [
+      "蓝胖",
+      "蓝胖子",
+      "双头食人魔",
+      "Ogre",
+      "OM"
+    ],
+    "undying": [
+      "尸王",
+      "不朽",
+      "Dirge"
+    ],
+    "rubick": [
+      "拉比克",
+      "大魔导师",
+      "魔导师",
+      "Rubik",
+      "Grand Magus"
+    ],
+    "disruptor": [
+      "萨尔",
+      "干扰者",
+      "风暴萨满",
+      "Thrall",
+      "Dis"
+    ],
+    "nyx_assassin": [
+      "小强",
+      "地穴刺客",
+      "NA",
+      "Nyx",
+      "Nerubian Assassin"
+    ],
+    "naga_siren": [
+      "小娜迦",
+      "小娜加",
+      "娜迦",
+      "Naga",
+      "Slithice"
+    ],
+    "keeper_of_the_light": [
+      "光法",
+      "光老头",
+      "Kotl",
+      "Ezalor"
+    ],
+    "wisp": [
+      "小精灵",
+      "精灵",
+      "Wisp"
+    ],
+    "visage": [
+      "死灵龙",
+      "死灵飞龙",
+      "Vis",
+      "Necro'lic"
+    ],
+    "slark": [
+      "小鱼",
+      "小鱼人",
+      "鱼人夜行者",
+      "Murloc Nightcrawler"
+    ],
+    "medusa": [
+      "大娜迦",
+      "大娜加",
+      "一姐",
+      "美杜莎",
+      "Dusa",
+      "蛇发女妖"
+    ],
+    "troll_warlord": [
+      "巨魔",
+      "巨魔战将",
+      "Troll",
+      "TW",
+      "Jah'rakal"
+    ],
+    "centaur": [
+      "人马",
+      "半人马",
+      "CW",
+      "Bradwarden"
+    ],
+    "magnataur": [
+      "猛犸",
+      "马格纳斯",
+      "Magnataur",
+      "Mag"
+    ],
+    "shredder": [
+      "伐木机",
+      "伐木",
+      "Timber",
+      "Shredder"
+    ],
+    "bristleback": [
+      "钢背",
+      "刚背",
+      "猪",
+      "BB",
+      "Rigwarl"
+    ],
+    "tusk": [
+      "海民",
+      "巨牙",
+      "Tuskarr",
+      "Ymir"
+    ],
+    "skywrath_mage": [
+      "天怒",
+      "天怒法师",
+      "Sky",
+      "Skywrath",
+      "Dragonus"
+    ],
+    "abaddon": [
+      "死骑",
+      "死亡骑士",
+      "ABA",
+      "Lord of Avernus"
+    ],
+    "elder_titan": [
+      "大牛",
+      "牛头人酋长",
+      "ET",
+      "TC",
+      "Tauren Chieftain"
+    ],
+    "legion_commander": [
+      "军团",
+      "军团指挥官",
+      "LC",
+      "Tresdin"
+    ],
+    "techies": [
+      "炸弹人",
+      "炸弹",
+      "地精工程师",
+      "Techie"
+    ],
+    "ember_spirit": [
+      "火猫",
+      "灰烬",
+      "Ember",
+      "Xin"
+    ],
+    "earth_spirit": [
+      "土猫",
+      "大地",
+      "ES",
+      "Earth Spirit",
+      "Kaolin"
+    ],
+    "abyssal_underlord": [
+      "大屁股",
+      "深渊领主",
+      "Pit Lord",
+      "Vrogros",
+      "UL"
+    ],
+    "terrorblade": [
+      "TB",
+      "魂守",
+      "灵魂守卫"
+    ],
+    "phoenix": [
+      "火鸡",
+      "凤凰",
+      "Icarus"
+    ],
+    "oracle": [
+      "神谕",
+      "神谕者",
+      "Nerif"
+    ],
+    "winter_wyvern": [
+      "冰龙",
+      "冰霜巨龙",
+      "WW",
+      "Wyvern",
+      "Auroth"
+    ],
+    "arc_warden": [
+      "电狗",
+      "天穹",
+      "AW",
+      "Zet"
+    ],
+    "monkey_king": [
+      "大圣",
+      "猴子",
+      "孙悟空",
+      "MK",
+      "Wukong"
+    ],
+    "dark_willow": [
+      "小仙女",
+      "花仙子",
+      "Willow",
+      "DW",
+      "Mireska"
+    ],
+    "pangolier": [
+      "滚滚",
+      "穿山甲",
+      "Pango",
+      "Donté Panlin"
+    ],
+    "grimstroke": [
+      "墨客",
+      "墨笔",
+      "Grim"
+    ],
+    "hoodwink": [
+      "松鼠",
+      "松鼠妹",
+      "Hood"
+    ],
+    "void_spirit": [
+      "紫猫",
+      "虚无",
+      "Void Spirit",
+      "Inai"
+    ],
+    "snapfire": [
+      "老奶奶",
+      "奶奶",
+      "Snap",
+      "Beatrix"
+    ],
+    "mars": [
+      "马尔斯",
+      "战神玛尔斯"
+    ],
+    "ringmaster": [
+      "马戏团长",
+      "马戏团长库格尔",
+      "Ring Master",
+      "Cugl"
+    ],
+    "dawnbreaker": [
+      "破晓",
+      "锤妹",
+      "晨星",
+      "DB",
+      "Dawn",
+      "Valora"
+    ],
+    "marci": [
+      "玛西",
+      "马西",
+      "Marcy"
+    ],
+    "primal_beast": [
+      "兽",
+      "原始野兽",
+      "PB",
+      "Primal"
+    ],
+    "muerta": [
+      "琼英",
+      "枪妹",
+      "Muerta"
+    ],
+    "kez": [
+      "鸟人",
+      "凯",
+      "Kez"
+    ],
+    "largo": [
+      "青蛙",
+      "蛙",
+      "朗戈",
+      "Largo"
+    ]
+  },
+  "items": {
+    "blink": [
+      "跳刀",
+      "跳匕",
+      "逃脱匕首",
+      "Blink"
+    ],
+    "overwhelming_blink": [
+      "力量跳",
+      "红跳",
+      "力量跳刀"
+    ],
+    "swift_blink": [
+      "敏捷跳",
+      "绿跳",
+      "敏捷跳刀"
+    ],
+    "arcane_blink": [
+      "智力跳",
+      "蓝跳",
+      "智力跳刀"
+    ],
+    "blades_of_attack": [
+      "攻击爪"
+    ],
+    "chainmail": [
+      "锁甲"
+    ],
+    "helm_of_iron_will": [
+      "铁意",
+      "铁头盔"
+    ],
+    "quelling_blade": [
+      "补刀斧",
+      "补刀刀"
+    ],
+    "faerie_fire": [
+      "仙灵火",
+      "小火"
+    ],
+    "infused_raindrop": [
+      "凝魂之泪",
+      "魂泪",
+      "水滴",
+      "雨滴"
+    ],
+    "wind_lace": [
+      "风灵纹",
+      "风灵"
+    ],
+    "ring_of_protection": [
+      "守护戒指"
+    ],
+    "moon_shard": [
+      "银月",
+      "月晶"
+    ],
+    "gauntlets": [
+      "力量手套",
+      "力手套"
+    ],
+    "slippers": [
+      "敏捷鞋",
+      "敏捷便鞋"
+    ],
+    "mantle": [
+      "智力披风"
+    ],
+    "branches": [
+      "树枝",
+      "铁树枝",
+      "快乐树枝"
+    ],
+    "boots_of_elves": [
+      "精灵皮靴",
+      "精灵布带"
+    ],
+    "ogre_axe": [
+      "食人魔斧",
+      "力量斧"
+    ],
+    "blade_of_alacrity": [
+      "欢欣",
+      "欢欣之剑"
+    ],
+    "staff_of_wizardry": [
+      "魔力杖",
+      "智力杖"
+    ],
+    "ultimate_orb": [
+      "极限球",
+      "极限法球"
+    ],
+    "gloves": [
+      "加速手套",
+      "攻速手套"
+    ],
+    "blitz_knuckles": [
+      "闪电手套",
+      "闪电指套"
+    ],
+    "lifesteal": [
+      "吸血面具",
+      "吸血面罩"
+    ],
+    "voodoo_mask": [
+      "巫毒面罩",
+      "法术吸血面具"
+    ],
+    "ring_of_regen": [
+      "回复指环",
+      "回2"
+    ],
+    "sobi_mask": [
+      "贤者面具",
+      "艺人面罩",
+      "回蓝面罩"
+    ],
+    "boots": [
+      "草鞋",
+      "鞋子",
+      "棕鞋",
+      "速度鞋"
+    ],
+    "gem": [
+      "宝石",
+      "真眼宝石",
+      "真视宝石"
+    ],
+    "cloak": [
+      "魔抗斗篷",
+      "抗魔披风"
+    ],
+    "talisman_of_evasion": [
+      "闪避项链",
+      "闪避护身符"
+    ],
+    "magic_stick": [
+      "小魔棒",
+      "小魔杖"
+    ],
+    "magic_wand": [
+      "大魔棒",
+      "大魔杖",
+      "魔棒升级"
+    ],
+    "ghost": [
+      "绿杖",
+      "绿棒",
+      "幽灵权杖"
+    ],
+    "clarity": [
+      "小蓝",
+      "小净化",
+      "净化"
+    ],
+    "enchanted_mango": [
+      "芒果",
+      "魔法芒果"
+    ],
+    "flask": [
+      "大药",
+      "大药膏",
+      "大红"
+    ],
+    "dust": [
+      "粉",
+      "显影粉",
+      "反隐粉"
+    ],
+    "bottle": [
+      "瓶子",
+      "魔瓶"
+    ],
+    "ward_observer": [
+      "假眼",
+      "黄眼",
+      "观察守卫",
+      "侦查守卫",
+      "Obs"
+    ],
+    "ward_sentry": [
+      "真眼",
+      "蓝眼",
+      "岗哨",
+      "Sentry"
+    ],
+    "ward_dispenser": [
+      "双眼",
+      "真假眼"
+    ],
+    "tango": [
+      "吃树",
+      "祭树",
+      "树祭"
+    ],
+    "tango_single": [
+      "共享吃树",
+      "单个吃树"
+    ],
+    "tpscroll": [
+      "TP",
+      "回城",
+      "回城纸",
+      "传送卷轴"
+    ],
+    "travel_boots": [
+      "飞鞋",
+      "一阶飞鞋",
+      "一级飞鞋",
+      "小飞鞋",
+      "BoT"
+    ],
+    "travel_boots_2": [
+      "大飞鞋",
+      "二级飞鞋",
+      "二阶飞鞋",
+      "飞鞋2"
+    ],
+    "phase_boots": [
+      "相位",
+      "相位靴"
+    ],
+    "demon_edge": [
+      "恶魔刀锋",
+      "恶魔刃"
+    ],
+    "eagle": [
+      "鹰角弓"
+    ],
+    "reaver": [
+      "掠夺斧",
+      "力量大斧"
+    ],
+    "relic": [
+      "遗物",
+      "圣者遗物"
+    ],
+    "hyperstone": [
+      "振奋",
+      "振奋石"
+    ],
+    "ring_of_health": [
+      "治疗之环",
+      "回5"
+    ],
+    "void_stone": [
+      "虚无石",
+      "虚无宝石"
+    ],
+    "mystic_staff": [
+      "神秘杖",
+      "智力大杖"
+    ],
+    "energy_booster": [
+      "蓝球",
+      "能量球"
+    ],
+    "point_booster": [
+      "精气球",
+      "蓝红球"
+    ],
+    "vitality_booster": [
+      "红球",
+      "活力球"
+    ],
+    "power_treads": [
+      "假腿",
+      "假腿鞋",
+      "PT",
+      "Treads"
+    ],
+    "phylactery": [
+      "灵匣",
+      "Phylactery"
+    ],
+    "angels_demise": [
+      "绝刃",
+      "Khanda"
+    ],
+    "hand_of_midas": [
+      "点金",
+      "点金手",
+      "迈达斯",
+      "Midas"
+    ],
+    "pers": [
+      "坚韧球",
+      "坚韧"
+    ],
+    "null_talisman": [
+      "挂件",
+      "智力挂件",
+      "空灵挂件"
+    ],
+    "wraith_band": [
+      "系带",
+      "幽灵系带"
+    ],
+    "mekansm": [
+      "梅肯",
+      "梅肯斯姆",
+      "Mek",
+      "Meka"
+    ],
+    "vladmir": [
+      "祭品",
+      "吸血祭品",
+      "Vlads"
+    ],
+    "ring_of_basilius": [
+      "圣殿",
+      "圣殿指环"
+    ],
+    "pipe": [
+      "笛子",
+      "团队笛子",
+      "烟斗",
+      "卡嘉长笛"
+    ],
+    "urn_of_shadows": [
+      "骨灰",
+      "小骨灰",
+      "骨灰盒",
+      "Urn"
+    ],
+    "headdress": [
+      "头巾",
+      "回复头巾"
+    ],
+    "sheepstick": [
+      "羊刀",
+      "羊杖",
+      "妖术刀",
+      "Hex",
+      "Sheepstick",
+      "Guinsoo"
+    ],
+    "orchid": [
+      "紫苑",
+      "小紫苑",
+      "紫怨",
+      "Orchid"
+    ],
+    "bloodthorn": [
+      "大紫苑",
+      "血辣",
+      "血刺"
+    ],
+    "echo_sabre": [
+      "回音刀",
+      "连击刀",
+      "回音剑",
+      "Echo Sabre"
+    ],
+    "cyclone": [
+      "吹风",
+      "风杖",
+      "小吹风",
+      "Eul",
+      "Euls"
+    ],
+    "wind_waker": [
+      "大吹风",
+      "大风杖",
+      "风之杖"
+    ],
+    "aether_lens": [
+      "以太",
+      "透镜",
+      "以太镜"
+    ],
+    "force_staff": [
+      "推推",
+      "小推推",
+      "推推棒",
+      "推杖",
+      "Force"
+    ],
+    "hurricane_pike": [
+      "大推推",
+      "飓风枪",
+      "大龙枪",
+      "Pike"
+    ],
+    "dagon": [
+      "大根",
+      "红杖",
+      "达贡",
+      "一级大根",
+      "1级大根"
+    ],
+    "dagon_2": [
+      "二级大根",
+      "2级大根",
+      "大根2"
+    ],
+    "dagon_3": [
+      "三级大根",
+      "3级大根",
+      "大根3"
+    ],
+    "dagon_4": [
+      "四级大根",
+      "4级大根",
+      "大根4"
+    ],
+    "dagon_5": [
+      "五级大根",
+      "5级大根",
+      "大根5",
+      "满级大根"
+    ],
+    "necronomicon": [
+      "死灵书",
+      "小人书"
+    ],
+    "necronomicon_2": [
+      "二级死灵书",
+      "2级死灵书"
+    ],
+    "necronomicon_3": [
+      "三级死灵书",
+      "3级死灵书",
+      "三级书"
+    ],
+    "ultimate_scepter": [
+      "A杖",
+      "A帐",
+      "蓝杖",
+      "神杖",
+      "Aghs",
+      "Aghanim"
+    ],
+    "ultimate_scepter_2": [
+      "吃A杖",
+      "A杖福佑",
+      "Aghs Blessing"
+    ],
+    "ultimate_scepter_roshan": [
+      "肉山A杖",
+      "肉山福佑"
+    ],
+    "aghanims_shard": [
+      "A晶",
+      "魔晶",
+      "Aghs Shard"
+    ],
+    "aghanims_shard_roshan": [
+      "魔晶掉落",
+      "肉山魔晶",
+      "魔晶消耗品"
+    ],
+    "refresher": [
+      "刷新",
+      "刷新球",
+      "RO"
+    ],
+    "refresher_shard": [
+      "刷新碎片",
+      "刷新球碎片"
+    ],
+    "assault": [
+      "强袭",
+      "强袭甲",
+      "AC"
+    ],
+    "heart": [
+      "龙心",
+      "恐鳌之心",
+      "魔龙之心",
+      "HoT"
+    ],
+    "black_king_bar": [
+      "BKB",
+      "黑皇",
+      "黑黄杖"
+    ],
+    "aegis": [
+      "不朽盾",
+      "肉山盾",
+      "复活盾",
+      "盾"
+    ],
+    "shivas_guard": [
+      "冰甲",
+      "西瓦",
+      "希瓦",
+      "Shivas"
+    ],
+    "bloodstone": [
+      "血精",
+      "血精石"
+    ],
+    "sphere": [
+      "林肯",
+      "林肯球",
+      "Linkens"
+    ],
+    "lotus_orb": [
+      "莲花",
+      "莲花球",
+      "莲花宝珠",
+      "Lotus Orb"
+    ],
+    "meteor_hammer": [
+      "陨星",
+      "陨石锤",
+      "陨星锤"
+    ],
+    "nullifier": [
+      "否决",
+      "否决挂件",
+      "否决吊坠",
+      "消散坠饰"
+    ],
+    "aeon_disk": [
+      "永恒盘",
+      "盘子",
+      "永恒之盘"
+    ],
+    "kaya": [
+      "慧光",
+      "慧"
+    ],
+    "essence_distiller": [
+      "精之灵器",
+      "精器"
+    ],
+    "vanguard": [
+      "先锋",
+      "先锋盾"
+    ],
+    "crimson_guard": [
+      "大先锋",
+      "团队先锋",
+      "赤红"
+    ],
+    "blade_mail": [
+      "反甲",
+      "反伤甲"
+    ],
+    "soul_booster": [
+      "镇魂石",
+      "振魂石"
+    ],
+    "hood_of_defiance": [
+      "挑战",
+      "挑战头巾"
+    ],
+    "rapier": [
+      "圣剑",
+      "神圣细剑",
+      "Rapier"
+    ],
+    "monkey_king_bar": [
+      "MKB",
+      "金箍",
+      "猴王杖"
+    ],
+    "radiance": [
+      "辉耀",
+      "HY",
+      "Rad"
+    ],
+    "butterfly": [
+      "蝴蝶剑",
+      "Bfly"
+    ],
+    "greater_crit": [
+      "大炮",
+      "大暴击",
+      "代达罗斯",
+      "Buriza"
+    ],
+    "lesser_crit": [
+      "小炮",
+      "小暴击",
+      "Crystalys"
+    ],
+    "basher": [
+      "晕锤",
+      "小晕锤",
+      "碎颅锤"
+    ],
+    "bfury": [
+      "狂战",
+      "狂战斧",
+      "BF",
+      "Battlefury"
+    ],
+    "manta": [
+      "分身",
+      "分身斧",
+      "幻影斧",
+      "Manta"
+    ],
+    "dragon_lance": [
+      "龙枪",
+      "小龙枪"
+    ],
+    "armlet": [
+      "臂章",
+      "狂战士臂章",
+      "Armlet"
+    ],
+    "invis_sword": [
+      "隐刀",
+      "小隐刀",
+      "影刃",
+      "Shadowblade",
+      "Lothar"
+    ],
+    "silver_edge": [
+      "大隐刀",
+      "白银",
+      "白银之锋"
+    ],
+    "sange_and_yasha": [
+      "双刀",
+      "散夜",
+      "散夜双刀",
+      "S&Y",
+      "SnY"
+    ],
+    "kaya_and_sange": [
+      "散慧",
+      "慧散",
+      "散慧对剑",
+      "K&S"
+    ],
+    "yasha_and_kaya": [
+      "慧夜",
+      "夜慧",
+      "慧夜对剑",
+      "Y&K"
+    ],
+    "satanic": [
+      "撒旦",
+      "大吸血"
+    ],
+    "mjollnir": [
+      "大电锤",
+      "雷神锤"
+    ],
+    "skadi": [
+      "冰眼",
+      "斯嘉蒂",
+      "Skadi"
+    ],
+    "sange": [
+      "散华",
+      "散"
+    ],
+    "helm_of_the_dominator": [
+      "支配",
+      "支配头盔",
+      "小支配"
+    ],
+    "helm_of_the_overlord": [
+      "大支配",
+      "统御"
+    ],
+    "maelstrom": [
+      "小电锤",
+      "漩涡",
+      "电锤",
+      "旋涡"
+    ],
+    "desolator": [
+      "暗灭",
+      "大减甲",
+      "黯灭刀",
+      "Deso"
+    ],
+    "desolator_2": [
+      "中立暗灭",
+      "大暗灭",
+      "寂灭之刃"
+    ],
+    "yasha": [
+      "夜叉",
+      "单刀"
+    ],
+    "mask_of_madness": [
+      "疯脸",
+      "疯面具",
+      "MoM"
+    ],
+    "diffusal_blade": [
+      "散失",
+      "净魂刀",
+      "小散失",
+      "Diffusal"
+    ],
+    "disperser": [
+      "大散失",
+      "驱散之刃"
+    ],
+    "ethereal_blade": [
+      "虚灵",
+      "虚灵刀",
+      "虚灵剑",
+      "绿刀",
+      "Eblade"
+    ],
+    "soul_ring": [
+      "魂戒",
+      "魂环"
+    ],
+    "arcane_boots": [
+      "秘法",
+      "秘法鞋",
+      "蓝鞋"
+    ],
+    "octarine_core": [
+      "玲珑",
+      "玲珑心",
+      "减CD心",
+      "Octarine"
+    ],
+    "orb_of_venom": [
+      "毒球",
+      "毒珠"
+    ],
+    "blight_stone": [
+      "枯萎之石",
+      "减甲球",
+      "减甲牌",
+      "小减甲"
+    ],
+    "orb_of_frost": [
+      "冰球",
+      "霜球"
+    ],
+    "orb_of_corrosion": [
+      "腐蚀球",
+      "大毒球"
+    ],
+    "ancient_janggo": [
+      "战鼓",
+      "小战鼓",
+      "鼓",
+      "Drums"
+    ],
+    "boots_of_bearing": [
+      "大鼓",
+      "大战鼓",
+      "鼓鞋",
+      "宽容之靴"
+    ],
+    "solar_crest": [
+      "大勋章",
+      "太阳勋章",
+      "炎阳"
+    ],
+    "medallion_of_courage": [
+      "勇气勋章",
+      "小勋章",
+      "勇气之章"
+    ],
+    "smoke_of_deceit": [
+      "雾",
+      "开雾",
+      "诡计雾",
+      "Smoke"
+    ],
+    "tome_of_knowledge": [
+      "经验书",
+      "知识书"
+    ],
+    "veil_of_discord": [
+      "纷争",
+      "面纱"
+    ],
+    "guardian_greaves": [
+      "大鞋",
+      "大鞋子",
+      "大秘法",
+      "Greaves"
+    ],
+    "rod_of_atos": [
+      "阿托斯",
+      "阿托斯之杖",
+      "Atos"
+    ],
+    "gungir": [
+      "大电",
+      "缚灵索",
+      "Gleipnir"
+    ],
+    "iron_talon": [
+      "打野爪",
+      "铁爪"
+    ],
+    "abyssal_blade": [
+      "大晕锤",
+      "深渊刀",
+      "深渊之刃"
+    ],
+    "heavens_halberd": [
+      "天堂戟",
+      "天堂",
+      "缴械戟"
+    ],
+    "ring_of_aquila": [
+      "天鹰",
+      "天鹰戒"
+    ],
+    "tranquil_boots": [
+      "绿鞋",
+      "静谧鞋"
+    ],
+    "shadow_amulet": [
+      "隐身护符",
+      "隐身符",
+      "暗影护符"
+    ],
+    "glimmer_cape": [
+      "微光",
+      "微光斗篷",
+      "Glimmer"
+    ],
+    "spirit_vessel": [
+      "大骨灰",
+      "魂瓮",
+      "Vessel"
+    ],
+    "holy_locket": [
+      "圣洁",
+      "圣洁吊坠",
+      "圣吊坠",
+      "Locket"
+    ],
+    "witch_blade": [
+      "巫师刀",
+      "小巫师刀"
+    ],
+    "devastator": [
+      "大巫师刀",
+      "圣斧",
+      "Parasma"
+    ],
+    "mage_slayer": [
+      "法师杀手",
+      "杀法师",
+      "魔抗刀"
+    ],
+    "revenants_brooch": [
+      "胸针",
+      "英灵针"
+    ],
+    "harpoon": [
+      "大回音",
+      "大连击刀"
+    ],
+    "pavise": [
+      "小绿盾",
+      "长盾"
+    ],
+    "falcon_blade": [
+      "猎鹰刀",
+      "猎鹰剑"
+    ],
+    "crellas_crozier": [
+      "大绿杖",
+      "克莱拉牧杖"
+    ],
+    "specialists_array": [
+      "分裂弓",
+      "行家阵列"
+    ],
+    "hydras_breath": [
+      "蛇棍",
+      "怪蛇之息"
+    ],
+    "blood_grenade": [
+      "血雷",
+      "手雷",
+      "血腥手雷"
+    ],
+    "cheese": [
+      "芝士",
+      "奶酪"
+    ],
+    "royale_with_cheese": [
+      "奶酪块",
+      "巨型奶酪"
+    ],
+    "famango": [
+      "莲花",
+      "小莲花",
+      "疗伤莲花"
+    ],
+    "great_famango": [
+      "大莲花",
+      "大疗伤莲花"
+    ],
+    "greater_famango": [
+      "巨莲花",
+      "巨大莲花"
+    ],
+    "roshans_banner": [
+      "肉山旗",
+      "肉山战旗"
+    ],
+    "madstone_bundle": [
+      "狂石",
+      "狂石包"
+    ],
+    "trusty_shovel": [
+      "铲子",
+      "铁铲"
+    ],
+    "philosophers_stone": [
+      "贤者之石",
+      "工资石"
+    ],
+    "ogre_seal_totem": [
+      "海豹",
+      "海豹图腾"
+    ],
+    "spider_legs": [
+      "蜘蛛腿",
+      "蜘蛛脚"
+    ],
+    "demonicon": [
+      "冥灵书",
+      "亡者之书"
+    ],
+    "fallen_sky": [
+      "天崩",
+      "陨星跳刀"
+    ],
+    "minotaur_horn": [
+      "牛角",
+      "恶牛角"
+    ],
+    "woodland_striders": [
+      "林地靴",
+      "林地鞋"
+    ],
+    "force_boots": [
+      "推推鞋",
+      "原力鞋"
+    ],
+    "mirror_shield": [
+      "镜盾",
+      "神镜盾"
+    ],
+    "ballista": [
+      "弩炮",
+      "攻城弩"
+    ],
+    "pirate_hat": [
+      "海盗帽",
+      "船长帽"
+    ],
+    "seer_stone": [
+      "先哲石",
+      "先知石"
+    ],
+    "mana_draught": [
+      "中立蓝药",
+      "魔力药剂"
+    ],
+    "dormant_curio": [
+      "休眠珍品",
+      "珍品"
+    ],
+    "weighted_dice": [
+      "骰子",
+      "加权骰子"
+    ],
+    "chipped_vest": [
+      "反伤背心",
+      "碎裂背心"
+    ],
+    "enchanters_bauble": [
+      "附魔盒",
+      "附魔师盒子"
+    ],
+    "foragers_kit": [
+      "采菌工具",
+      "采蘑菇工具"
+    ],
+    "tidehunter_fish": [
+      "潮汐的鱼",
+      "潮汐鱼"
+    ]
+  }
+}
