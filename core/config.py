@@ -458,7 +458,22 @@ SCHEMA = [
                 "image_enabled",
                 "启用图片理解",
                 True,
-                "仅当决定回复且最近存在相关图片时调用视觉模型。",
+                "关闭后停止读取图片和使用旧描述。需要选择可接收图像的 Provider。",
+            ),
+            field(
+                "vision_strategy", "图片理解时机", "economy",
+                "economy：决定回复后识图。balanced：正式模式下通过本地判断且文字不足时先识图。full：正式模式下对近期相关图片限量主动识别。",
+                choices=["economy", "balanced", "full"],
+            ),
+            field(
+                "vision_observe_daily_calls", "完整模式每日主动识图次数", 6,
+                "所有授权会话合计，单独计数并共用视觉与总预算。设为 0 停止主动识别。",
+                low=0, high=100,
+            ),
+            field(
+                "vision_observe_interval_seconds", "同一会话主动识图最小间隔（秒）", 60,
+                "仅完整模式使用。每日调用额度跨重启保留。",
+                low=15, high=3600,
             ),
             field(
                 "images_per_reply",

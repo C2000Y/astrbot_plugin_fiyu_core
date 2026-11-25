@@ -11,7 +11,7 @@ import aiohttp
 
 from .. import __version__
 from .memory import allowed
-from .telemetry import BudgetExceeded
+from .telemetry import BudgetExceeded, ModelFailure
 from .research_sources import (STEAM_NEWS, STEAM_RSS, PRO_LIST, PRO_MATCH,
     SOURCE_NAMES, NEWS_SOURCES, ENDPOINTS, HEALTH_KEY, RequestBudget,
     SourceUnavailable, HTTPFailure, error_info, text_excerpt, parse_news_json, parse_news_rss)
@@ -542,10 +542,17 @@ class ResearchService:
                 state,reason="budget",stage+"：预算不足或配置已停用"
                 note=None
             except Exception as exc:
-                state,reason="failed",stage+"："+error_info(exc)[0]
+                if isinstance(exc, ModelFailure):
+                    detail = error_info(TimeoutError())[0] if exc.category == "timeout" else str(exc)
+                    failure_fields = exc.log_fields()
+                else:
+                    detail = error_info(exc)[0]
+                    failure_fields = {}
+                state,reason="failed",stage+"："+detail
                 note=None
                 self.log.emit("RESEARCH","stage_failed","WARNING",task=source or "research",
-                              status=stage,reason=reason,exception=type(exc).__name__,run_id=run)
+                              status=stage,reason=reason,exception=type(exc).__name__,run_id=run,
+                              **failure_fields)
             finally:
                 latest=await self.store.call("usage_today",day_key())
                 tokens=max(0,latest["module_tokens"].get("research",0)-start_tokens)

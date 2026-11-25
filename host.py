@@ -15,9 +15,11 @@ from astrbot.core.agent.message import (
     ToolCallMessageSegment,
 )
 from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.exceptions import EmptyModelOutputError, ProviderNotFoundError
 from astrbot.core.provider.entities import ToolCallsResult
+from openai import APIConnectionError, APITimeoutError
 
-from .core.telemetry import BalanceCheckError
+from .core.telemetry import BalanceCheckError, ModelFailure
 from .core.util import clean, contains_dsml, ident, now, plain_reply_text, unsafe_secret
 
 
@@ -39,7 +41,10 @@ class AstrHost:
         self.context = context
 
     async def chat_provider(self, umo):
-        return await self.context.get_current_chat_provider_id(umo=umo)
+        try:
+            return await self.context.get_current_chat_provider_id(umo=umo)
+        except ProviderNotFoundError:
+            raise ModelFailure("provider_unavailable") from None
 
     def ai_enabled(self, event):
         return bool(
@@ -164,9 +169,12 @@ class AstrHost:
         if at_others:
             text += " [提及群友或全体成员]"
         images = [m for m in msgs if isinstance(m, Image)]
+        image_senders = [uid] * len(images)
         # QQ may expose quoted images as Reply.chain; use only real adapter components.
         for q in quotes[:2]:
-            images.extend(m for m in (q.chain or []) if isinstance(m, Image))
+            quoted_images = [m for m in (q.chain or []) if isinstance(m, Image)]
+            images.extend(quoted_images)
+            image_senders.extend([str(q.sender_id or uid)] * len(quoted_images))
         if images:
             text += f" [图片×{min(len(images), 20)}]"
         if poke:
@@ -205,6 +213,7 @@ class AstrHost:
             "mentioned_uids": mentioned_uids,
             "quoted_uids": quoted_uids,
             "images": images[:20],
+            "image_senders": image_senders[:20],
             "unverified_quotes": unverified_quotes,
         }
 
@@ -257,15 +266,22 @@ class AstrHost:
         kwargs = {"request_max_retries": 1}
         if tool_results:
             kwargs["tool_calls_result"] = tool_results
-        return await self.context.llm_generate(
-            chat_provider_id=provider,
-            prompt=prompt,
-            system_prompt=system,
-            contexts=contexts or [],
-            image_urls=images or [],
-            tools=schemas,
-            **kwargs,
-        )
+        try:
+            return await self.context.llm_generate(
+                chat_provider_id=provider,
+                prompt=prompt,
+                system_prompt=system,
+                contexts=contexts or [],
+                image_urls=images or [],
+                tools=schemas,
+                **kwargs,
+            )
+        except APITimeoutError:
+            raise ModelFailure("timeout") from None
+        except (ProviderNotFoundError, APIConnectionError):
+            raise ModelFailure("provider_unavailable") from None
+        except EmptyModelOutputError:
+            raise ModelFailure("invalid_response") from None
 
     @staticmethod
     def tool_result(response, results: list[tuple[str, str]]):

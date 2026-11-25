@@ -320,7 +320,7 @@ async function main() {
     await openTab("learning");
     await page.getByText("紫猫", { exact: true }).waitFor();
     await page.getByRole("button", { name: "批准", exact: true }).click();
-    await page.getByText("已批准", { exact: true }).waitFor();
+    await page.getByRole("table").getByText("已批准", { exact: true }).waitFor();
     await openTab("research");
     await page.getByText("事实内容示例",{exact:true}).waitFor();
     await page.getByText("角色观点（非事实）",{exact:true}).waitFor();
